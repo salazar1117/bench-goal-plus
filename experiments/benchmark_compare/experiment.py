@@ -71,6 +71,7 @@ from experiments.openevolve_compare.experiment import (  # noqa: E402
     copy_goal_plus_pi_assets,
     finalize_goal_plus_search,
     goal_plus_incomplete_reason,
+    goal_plus_settled_selection,
     parse_codex_events,
     parse_pi_events,
     primary_score,
@@ -1757,6 +1758,8 @@ def execute_goal_plus(
         "controller_final_claimed": final_claims,
         "coverage": "seed + Goal Plus verifier command logs + controller final ledger",
     }
+    goal_plus_settled = goal_plus_settled_selection(control["goal_plus"])
+    control["goal_plus_settled_selection"] = goal_plus_settled
     reason = goal_plus_incomplete_reason(
         control["goal_plus"],
         expected_concurrency=budget["concurrency"],
@@ -1767,6 +1770,7 @@ def execute_goal_plus(
         expected_worker_min_verifier_runs=(
             1 if budget.get("worker_min_runtime_seconds") is not None else None
         ),
+        require_satisfied_pi_minimum_lease=not goal_plus_settled,
         codex_events=control.get("codex"),
     )
     if reason:
@@ -2137,6 +2141,8 @@ def repair_closeout(args: argparse.Namespace) -> int:
         "coverage": "seed + Goal Plus verifier command logs + controller final ledger",
     }
     budget = manifest["budget"]
+    goal_plus_settled = goal_plus_settled_selection(control["goal_plus"])
+    control["goal_plus_settled_selection"] = goal_plus_settled
     reason = goal_plus_incomplete_reason(
         control["goal_plus"],
         expected_concurrency=budget["concurrency"],
@@ -2147,6 +2153,7 @@ def repair_closeout(args: argparse.Namespace) -> int:
         expected_worker_min_verifier_runs=(
             1 if budget.get("worker_min_runtime_seconds") is not None else None
         ),
+        require_satisfied_pi_minimum_lease=not goal_plus_settled,
         codex_events=control.get("codex"),
     )
     if not control["goal_plus_controller_closeout_repair"].get("completed"):

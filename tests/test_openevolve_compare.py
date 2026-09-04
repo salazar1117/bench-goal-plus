@@ -593,6 +593,83 @@ class OpenEvolveComparisonTest(unittest.TestCase):
             experiment.goal_plus_incomplete_reason(unsatisfied_lease, **kwargs),
         )
 
+    def test_settled_selection_waives_unsatisfied_pi_minimum_lease(self) -> None:
+        # A Search run that committed a real business result (selected_score,
+        # even 0.0 = NOT_PASS) must NOT be reported INFRA just because the host
+        # cut a pi worker's minimum lease short.
+        settled_not_pass = {
+            "goals": [
+                {
+                    "goal_plus_id": "gp_0001",
+                    "status": "complete",
+                    "linked_run_id": "run_test",
+                }
+            ],
+            "runs": [
+                {
+                    "run_id": "run_test",
+                    "candidate_count": 2,
+                    "worker_host": "pi-rpc",
+                    "selected_score": 0.0,
+                    "best_recorded_score": 0.0,
+                    "worker_budget": {
+                        "min_runtime_seconds": 150,
+                        "min_verifier_runs": 1,
+                        "max_runtime_seconds": 200,
+                        "on_exceed": "interrupt",
+                    },
+                    "pi_pool_jobs": [
+                        {
+                            "job_id": "job_1",
+                            "candidate_id": "c001",
+                            "status": "timed_out",
+                            "lease": {"satisfied": False},
+                        },
+                        {
+                            "job_id": "job_2",
+                            "candidate_id": "c002",
+                            "status": "completed",
+                            "lease": {"satisfied": True},
+                        },
+                    ],
+                    "bound_candidate_count": 2,
+                    "worker_verified_candidate_count": 2,
+                    "unbound_agent_session_count": 0,
+                    "session_counts_by_candidate": {"c001": 1, "c002": 1},
+                    "bound_session_counts_by_candidate": {"c001": 1, "c002": 1},
+                }
+            ],
+        }
+        kwargs = {
+            "expected_concurrency": 2,
+            "expected_goal_plus_id": "gp_0001",
+            "expected_run_id": "run_test",
+            "expected_worker_min_runtime_seconds": 150,
+            "expected_worker_min_verifier_runs": 1,
+            "minimum_worker_verified_candidates": 1,
+        }
+
+        # The committed selection makes this run settled.
+        self.assertTrue(experiment.goal_plus_settled_selection(settled_not_pass))
+
+        # Default behavior (lease required) still flags the unsatisfied lease.
+        self.assertIn(
+            "minimum lease",
+            experiment.goal_plus_incomplete_reason(settled_not_pass, **kwargs),
+        )
+        # Waiving the lease (because the run settled) reports a real NOT_PASS.
+        self.assertIsNone(
+            experiment.goal_plus_incomplete_reason(
+                settled_not_pass,
+                require_satisfied_pi_minimum_lease=False,
+                **kwargs,
+            )
+        )
+
+        # A genuine INFRA case (seed never started, no runs) is never settled,
+        # so the lease/incompleteness gates stay in force.
+        self.assertFalse(experiment.goal_plus_settled_selection({"goals": [], "runs": []}))
+
     def test_natural_goal_plus_completion_ignores_aborted_search_history(
         self,
     ) -> None:

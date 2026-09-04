@@ -1533,6 +1533,41 @@ def collect_goal_plus_state(workspace: Path) -> dict[str, Any]:
     }
 
 
+def goal_plus_settled_selection(
+    state: dict[str, Any], *, target_score: float | None = None
+) -> bool:
+    """Return True when a Search run has materialized a real business result.
+
+    A run is "settled" once Goal Plus committed a ``selected_score`` (even 0.0,
+    which is a genuine NOT_PASS) or a verified candidate reached ``target_score``.
+    Such a run has a real PASS/NOT_PASS outcome and must never be reported as an
+    INFRA_ERROR just because the host cut a pi worker's minimum lease short.
+    """
+
+    runs = state.get("runs") or []
+    if not runs:
+        return False
+    for run in runs:
+        selected_score = run.get("selected_score")
+        if selected_score is not None:
+            try:
+                float(selected_score)
+                return True
+            except (TypeError, ValueError):
+                pass
+        best = run.get("best_recorded_score")
+        if best is not None:
+            try:
+                best_value = float(best)
+            except (TypeError, ValueError):
+                continue
+            if target_score is None or best_value == float(target_score):
+                verified = run.get("worker_verified_candidate_count")
+                if isinstance(verified, int) and verified >= 1:
+                    return True
+    return False
+
+
 def goal_plus_incomplete_reason(
     state: dict[str, Any],
     *,
@@ -1542,6 +1577,7 @@ def goal_plus_incomplete_reason(
     expected_worker_min_verifier_runs: int | None = None,
     expected_goal_plus_id: str | None = None,
     expected_run_id: str | None = None,
+    require_satisfied_pi_minimum_lease: bool = True,
     codex_events: dict[str, Any] | None = None,
 ) -> str | None:
     goals = state.get("goals") or []
@@ -1612,7 +1648,11 @@ def goal_plus_incomplete_reason(
                 f"Search run {run.get('run_id')} frozen worker budget mismatch: "
                 + ", ".join(mismatches)
             )
-        if expected_lease and run.get("worker_host") == "pi-rpc":
+        if (
+            require_satisfied_pi_minimum_lease
+            and expected_lease
+            and run.get("worker_host") == "pi-rpc"
+        ):
             jobs = run.get("pi_pool_jobs") or []
             unsatisfied = [
                 str(job.get("job_id") or job.get("candidate_id") or "unknown")
