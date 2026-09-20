@@ -44,6 +44,7 @@ readonly PROJECTS_DIR="$DETECT_ROOT/projects"
 readonly L1_SOURCE_CACHE="$ZSOFT_CHECKOUT/benchmarks/vulnerability/zsoft-l1/.cache/sources"
 readonly PYTHON="$WORK_DIR/.bench-env/venv/bin/python"
 readonly EXPECTED_CASES="${DETECT_EXPECTED_CASES:-5}"
+readonly SHARED_CACHE_ENABLED="${DETECT_SHARED_CACHE:-0}"
 
 MODE="all"
 REQUESTED_CASE_ID=""
@@ -86,6 +87,8 @@ usage() {
   DETECT_FETCH_MISSING_SOURCES  缺少源码时是否自动获取，1（默认）或 0
   DETECT_MAX_INFRA_ATTEMPTS     基础设施失败最大尝试次数
   DETECT_STATUS_INTERVAL_SECONDS 实验运行心跳间隔，默认 60 秒
+  DETECT_SHARED_CACHE           1 时为 Goal Plus 运行开启 shared_cache 事实面与
+                                LLM verifier 逐 finding 路径可行性分析（默认 0）
 
 实验合同:
   默认配置为 model=deepseek-v4-flash、reasoning=high、T=1800、K=4、C=1、R=1。
@@ -540,6 +543,9 @@ build_bench_args() {
         --skip-provision
         --foreground
     )
+    if [[ "$SHARED_CACHE_ENABLED" == "1" ]]; then
+        BENCH_ARGS+=(--shared-cache)
+    fi
 }
 
 start_launch_heartbeat() {
