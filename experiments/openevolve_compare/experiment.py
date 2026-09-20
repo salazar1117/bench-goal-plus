@@ -266,6 +266,7 @@ def render_goal(
     coordination_condition: str | None = None,
     search_space_mode: str | None = None,
     shared_dir_enabled: bool = False,
+    shared_cache_enabled: bool = False,
     controller_only_official_evaluation: bool = False,
     evaluation_mode: str | None = None,
     early_stop_contract: dict[str, Any] | None = None,
@@ -418,6 +419,19 @@ def render_goal(
                 if shared_dir_enabled
                 else ""
             )
+            + (
+                "- Set top-level `shared_cache.enabled=true` with "
+                '`shared_cache.sections=[{"key":"trigger_evidence","title":"Trigger preconditions","requirement":"One objective precondition chain (call site, guarding condition, required state) that a reported vulnerability needs to be reachable, stated so a peer can re-check it against source","cardinality":"any","requires_evidence":true},{"key":"path_feasibility","title":"Feasible path sketches","requirement":"One candidate-to-sink control/data path for a reported vulnerability with file/function/line anchors and the step that makes it feasible or blocks it","cardinality":"any","requires_evidence":true},{"key":"fp_signals","title":"False-positive signals","requirement":"One objective reason a reported vulnerability is likely not exploitable (unreachable branch, sanitized input, wrong location anchor, bug_type mismatch)","cardinality":"any","requires_evidence":false},{"key":"verifier_feasibility_verdicts","title":"Verifier feasibility verdicts","requirement":"LLM-verifier per-finding feasibility conclusions with the report anchor and the decisive path evidence or blocking fact","cardinality":"any","requires_evidence":false}]`, '
+                '`shared_cache.max_records=200`, and '
+                '`shared_cache.max_content_chars=2000`.\n'
+                "- Set `strategy.verifier.scores=[\"correctness_gap\","
+                "\"validation_gap\"]` so the LLM verifier assesses every settled "
+                "attempt against the shared cache's path-evidence sections; keep "
+                "`strategy.selection.ranking_keys=[\"hard_score\"]` unchanged so "
+                "verdicts never alter the public selection rule.\n"
+                if shared_cache_enabled
+                else ""
+            )
             + f"- `strategy.worker_budget.max_runtime_seconds={dispatch_seconds}` and "
             "`strategy.worker_budget.on_exceed=\"interrupt\"`; continue the same candidate "
             "lineages while useful work and outer time remain.\n"
@@ -476,6 +490,19 @@ def render_goal(
         + (
             "- Set top-level `shared_dir.enabled=true`.\n"
             if shared_dir_enabled
+            else ""
+        )
+        + (
+            "- Set top-level `shared_cache.enabled=true` with "
+            '`shared_cache.sections=[{"key":"trigger_evidence","title":"Trigger preconditions","requirement":"One objective precondition chain (call site, guarding condition, required state) that a reported vulnerability needs to be reachable, stated so a peer can re-check it against source","cardinality":"any","requires_evidence":true},{"key":"path_feasibility","title":"Feasible path sketches","requirement":"One candidate-to-sink control/data path for a reported vulnerability with file/function/line anchors and the step that makes it feasible or blocks it","cardinality":"any","requires_evidence":true},{"key":"fp_signals","title":"False-positive signals","requirement":"One objective reason a reported vulnerability is likely not exploitable (unreachable branch, sanitized input, wrong location anchor, bug_type mismatch)","cardinality":"any","requires_evidence":false},{"key":"verifier_feasibility_verdicts","title":"Verifier feasibility verdicts","requirement":"LLM-verifier per-finding feasibility conclusions with the report anchor and the decisive path evidence or blocking fact","cardinality":"any","requires_evidence":false}]`, '
+            '`shared_cache.max_records=200`, and '
+            '`shared_cache.max_content_chars=2000`.\n'
+            "- Set `strategy.verifier.scores=[\"correctness_gap\","
+            "\"validation_gap\"]` so the LLM verifier assesses every settled "
+            "attempt against the shared cache's path-evidence sections; keep "
+            "selection ranking keys unchanged so verdicts never alter the "
+            "selection rule.\n"
+            if shared_cache_enabled
             else ""
         )
         + f"- `strategy.worker_budget.max_runtime_seconds={dispatch_seconds}` and "

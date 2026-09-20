@@ -132,6 +132,7 @@ class CampaignSpec:
     profile: str | None = None
     task_id: str | None = None
     shared_dir: bool = False
+    shared_cache: bool = False
     methods: tuple[str, ...] = ()
     conditions: tuple[str, ...] = ()
     seeds: tuple[int, ...] = (1,)
@@ -175,6 +176,7 @@ class CampaignSpec:
             "profile": self.profile,
             "task_id": self.task_id,
             "shared_dir": self.shared_dir,
+            "shared_cache": self.shared_cache,
             "methods": list(self.methods),
             "conditions": list(self.conditions),
             "seeds": list(self.seeds),

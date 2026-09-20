@@ -151,6 +151,7 @@ class PrepareConfig:
     method: str
     task_id: str | None = None
     shared_dir: bool = False
+    shared_cache: bool = False
     adapter_module: str | None = None
     condition: str | None = None
     coordination_variant: str | None = None
@@ -202,6 +203,7 @@ def add_runtime_prepare_arguments(
     parser.add_argument("--pi-api", choices=PI_APIS, default="openai-responses")
     parser.add_argument("--pi-api-key-env", default=PI_API_KEY_ENV)
     parser.add_argument("--shared-dir", action="store_true")
+    parser.add_argument("--shared-cache", action="store_true")
     parser.add_argument(
         "--reasoning-effort",
         choices=reasoning_choices,
@@ -545,6 +547,11 @@ def prepare(args: argparse.Namespace) -> int:
         "goal-plus-pi",
     }:
         raise ValueError("--shared-dir requires a Goal Plus method")
+    if getattr(args, "shared_cache", False) and args.method not in {
+        "goal-plus-codex",
+        "goal-plus-pi",
+    }:
+        raise ValueError("--shared-cache requires a Goal Plus method")
     if args.iterations_ceiling < 1:
         raise ValueError("iterations ceiling must be positive")
     if args.llm_max_tokens < 1:
@@ -705,6 +712,7 @@ def prepare(args: argparse.Namespace) -> int:
             coordination_condition=condition.condition_id if condition else None,
             search_space_mode=condition.search_space_mode if condition else None,
             shared_dir_enabled=getattr(args, "shared_dir", False),
+            shared_cache_enabled=getattr(args, "shared_cache", False),
             controller_only_official_evaluation=(
                 CONTROLLER_ONLY_OFFICIAL_EVALUATION
             ),
@@ -762,6 +770,7 @@ def prepare(args: argparse.Namespace) -> int:
             "artifact_name": ARTIFACT_NAME,
             "artifact_is_directory": (workspace / ARTIFACT_NAME).is_dir(),
             "shared_dir_enabled": getattr(args, "shared_dir", False),
+            "shared_cache_enabled": getattr(args, "shared_cache", False),
             "worker_sandbox": (
                 _pi_worker_sandbox_policy(args.pi_api_key_env)
                 if agent_harness == "pi"
@@ -2164,6 +2173,9 @@ def execute_goal_plus(
         search_space_mode=(manifest.get("condition") or {}).get("search_space_mode"),
         shared_dir_enabled=bool(
             (manifest.get("goal_plus_config") or {}).get("shared_dir_enabled")
+        ),
+        shared_cache_enabled=bool(
+            (manifest.get("goal_plus_config") or {}).get("shared_cache_enabled")
         ),
         controller_only_official_evaluation=controller_only,
         evaluation_mode=EVALUATION_MODE,

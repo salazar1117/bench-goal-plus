@@ -58,6 +58,8 @@ class CurrentGoalPlusContractTest(unittest.TestCase):
                 "goal_plus_search_stage_shared_tool",
                 "goal_plus_search_copy_shared_tool",
                 "goal_plus_search_get_evidence_detail",
+                "goal_plus_search_read_shared_cache",
+                "goal_plus_search_append_shared_cache",
                 "goal_plus_search_run_verifier",
                 "goal_plus_search_list_iterations",
             },
@@ -1699,3 +1701,188 @@ def test_bench_path_shim_launches_standard_goal_plus_pi_worker(
         and response.get("command") == "get_state"
         for response in responses
     )
+
+
+def test_blind_tool_proxy_projects_the_shared_cache_fact_plane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proxy = WorkerToolProxy(
+        root=tmp_path / ".gp",
+        context=_context(tmp_path),
+        socket_dir=tmp_path / "proxy",
+        evaluation_mode="blind",
+    )
+    section = {
+        "key": "trigger_evidence",
+        "title": "Trigger preconditions",
+        "requirement": "One objective precondition chain.",
+        "cardinality": "any",
+        "requires_evidence": True,
+    }
+    entry = {
+        "key": "trigger_evidence:abc",
+        "title": "Trigger preconditions",
+        "section_key": "trigger_evidence",
+        "content": "HandlerApi.cpp:1692 requires keep_alive flag set.",
+        "writer": "candidate:c001",
+        "record_id": "run_1:agent_1",
+        "superseded_by": None,
+        "evidence_ref": "submission/finding_01.json",
+    }
+    snapshot = {
+        "sections": [section],
+        "entries": [entry],
+        "total_records": 1,
+    }
+
+    read_request = {
+        "tool": "goal_plus_search_read_shared_cache",
+        "args": {"agent_session_id": "agent_1"},
+    }
+    monkeypatch.setattr(
+        "experiments.benchmark_compare.pi_worker_launcher._run_host_tool",
+        lambda *_args: snapshot,
+    )
+    response = proxy.dispatch(read_request)
+    assert response["ok"] is True
+    assert response["result"] == snapshot
+
+    append_request = {
+        "tool": "goal_plus_search_append_shared_cache",
+        "args": {
+            "agent_session_id": "agent_1",
+            "section": "fp_signals",
+            "content": "finding_02.json anchor path is outside the mounted source tree.",
+            "evidence_ref": "submission/finding_02.json",
+        },
+    }
+    append_result = {
+        "section": "fp_signals",
+        "writer": "candidate:c001",
+        "view": [entry],
+    }
+    monkeypatch.setattr(
+        "experiments.benchmark_compare.pi_worker_launcher._run_host_tool",
+        lambda *_args: append_result,
+    )
+    response = proxy.dispatch(append_request)
+    assert response["ok"] is True
+    assert response["result"] == append_result
+
+    for forbidden in ("score", "process_passed", "aggregate_score"):
+        tainted = {**snapshot, forbidden: "secret-value"}
+        monkeypatch.setattr(
+            "experiments.benchmark_compare.pi_worker_launcher._run_host_tool",
+            lambda *_args, _tainted=tainted: _tainted,
+        )
+        response = proxy.dispatch(read_request)
+        assert response == {
+            "ok": False,
+            "error": "worker tool response is unavailable",
+        }
+        assert "secret-value" not in json.dumps(response)
+
+    for extra_field in ("supersedes", "evidence_ref"):
+        tampered = {**append_request["args"], extra_field: 123}
+        with pytest.raises(PermissionError):
+            proxy.dispatch({**append_request, "args": tampered})
+
+    with pytest.raises(PermissionError):
+        proxy.dispatch({
+            "tool": "goal_plus_search_append_shared_cache",
+            "args": {
+                "agent_session_id": "agent_1",
+                "section": "trigger_evidence",
+                "content": "fact",
+                "unexpected_field": "value",
+            },
+        })
+
+
+def test_blind_context_and_verifier_receipts_carry_the_cache_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proxy = WorkerToolProxy(
+        root=tmp_path / ".gp",
+        context=_context(tmp_path),
+        socket_dir=tmp_path / "proxy",
+        evaluation_mode="blind",
+    )
+    snapshot = {
+        "sections": [{
+            "key": "verifier_feasibility_verdicts",
+            "title": "Verifier feasibility verdicts",
+            "requirement": "Per-finding feasibility conclusions.",
+            "cardinality": "any",
+            "requires_evidence": False,
+        }],
+        "entries": [{
+            "key": "verifier_feasibility_verdicts:abc",
+            "title": "Verifier feasibility verdicts",
+            "section_key": "verifier_feasibility_verdicts",
+            "content": "finding_01.json: path blocked by keep_alive precondition.",
+            "writer": "verifier",
+            "record_id": "run_1:verifier-1",
+            "superseded_by": None,
+            "evidence_ref": None,
+        }],
+        "total_records": 1,
+        "updates_allowed": True,
+    }
+    context_request = {
+        "tool": "goal_plus_search_get_agent_context",
+        "args": {"agent_session_id": "agent_1"},
+    }
+    context_result = {
+        "agent_session_id": "agent_1",
+        "run_id": "run_1",
+        "candidate_id": "c001",
+        "metric_name": "format_valid",
+        "metric_direction": "maximize",
+        "candidate_task": {"workspace": str(tmp_path)},
+        "shared_cache": snapshot,
+    }
+    monkeypatch.setattr(
+        "experiments.benchmark_compare.pi_worker_launcher._run_host_tool",
+        lambda *_args: context_result,
+    )
+    response = proxy.dispatch(context_request)
+    assert response["ok"] is True
+    assert response["result"]["shared_cache"] == {
+        "sections": snapshot["sections"],
+        "entries": snapshot["entries"],
+        "total_records": 1,
+    }
+
+    verifier_request = {
+        "tool": "goal_plus_search_run_verifier",
+        "args": {
+            "run_id": "run_1",
+            "candidate_id": "c001",
+            "agent_session_id": "agent_1",
+        },
+    }
+    verifier_result = {
+        "run_id": "run_1",
+        "candidate_id": "c001",
+        "shared_cache_injected": True,
+        "shared_cache_snapshot": snapshot,
+    }
+    monkeypatch.setattr(
+        "experiments.benchmark_compare.pi_worker_launcher._run_host_tool",
+        lambda *_args: verifier_result,
+    )
+    response = proxy.dispatch(verifier_request)
+    assert response["ok"] is True
+    assert response["result"] == {
+        "run_id": "run_1",
+        "candidate_id": "c001",
+        "recorded": True,
+        "shared_cache_snapshot": {
+            "sections": snapshot["sections"],
+            "entries": snapshot["entries"],
+            "total_records": 1,
+        },
+    }

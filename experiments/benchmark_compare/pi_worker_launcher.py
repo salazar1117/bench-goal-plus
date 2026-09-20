@@ -54,6 +54,8 @@ _WORKER_TOOLS = {
     "goal_plus_search_stage_shared_tool",
     "goal_plus_search_copy_shared_tool",
     "goal_plus_search_get_evidence_detail",
+    "goal_plus_search_read_shared_cache",
+    "goal_plus_search_append_shared_cache",
     "goal_plus_search_run_verifier",
     "goal_plus_search_list_iterations",
 }
@@ -79,6 +81,23 @@ _BLIND_SYSTEM_PROMPT = (
     "tool errors. Work only from public task files and source mounted in this sandbox."
 )
 _OPAQUE_RESULTS_LEDGER = "iteration\tcommit\tstate\n"
+_BLIND_CACHE_SECTION_FIELDS = {
+    "key",
+    "title",
+    "requirement",
+    "cardinality",
+    "requires_evidence",
+}
+_BLIND_CACHE_ENTRY_FIELDS = {
+    "key",
+    "title",
+    "section_key",
+    "content",
+    "writer",
+    "record_id",
+    "superseded_by",
+    "evidence_ref",
+}
 _BLIND_CONTEXT_SOURCE_FIELDS = {
     "agent_session_id",
     "best_iteration",
@@ -100,6 +119,7 @@ _BLIND_CONTEXT_SOURCE_FIELDS = {
     "results_tsv",
     "resume",
     "run_id",
+    "shared_cache",
     "supplemental_evaluation_enabled",
     "tool_family_catalog",
     "workspace_access",
@@ -146,6 +166,9 @@ _BLIND_VERIFIER_SOURCE_FIELDS = {
     "process_passed",
     "promotion_passed",
     "run_id",
+    "shared_cache_injected",
+    "shared_cache_snapshot",
+    "shared_cache_warning",
     "shared_tool_consumed_entries",
     "shared_tool_deduplicated_entries",
     "shared_tool_errors",
@@ -637,6 +660,12 @@ def _blind_context_response(
     }
     projected["metric_name"] = _BLIND_PUBLIC_METRIC
     projected["metric_direction"] = "maximize"
+    shared_cache = result.get("shared_cache")
+    if shared_cache is not None:
+        projected_cache = _blind_shared_cache_snapshot(shared_cache)
+        if projected_cache is _INVALID_BLIND_RESPONSE:
+            return _INVALID_BLIND_RESPONSE
+        projected["shared_cache"] = projected_cache
     return projected
 
 
@@ -668,10 +697,107 @@ def _blind_verifier_receipt(
         or result.get("candidate_id") != context.candidate_id
     ):
         return _INVALID_BLIND_RESPONSE
-    return {
+    receipt: dict[str, Any] = {
         "run_id": context.run_id,
         "candidate_id": context.candidate_id,
         "recorded": True,
+    }
+    if result.get("shared_cache_injected") is True:
+        projected_cache = _blind_shared_cache_snapshot(
+            result.get("shared_cache_snapshot")
+        )
+        if projected_cache is _INVALID_BLIND_RESPONSE:
+            return _INVALID_BLIND_RESPONSE
+        receipt["shared_cache_snapshot"] = projected_cache
+    return receipt
+
+
+def _blind_shared_cache_snapshot(
+    snapshot: Any,
+) -> dict[str, Any] | object:
+    """Project an operator-frozen shared cache snapshot for a blind worker.
+
+    The cache is an operator-defined fact plane: sections and entries are
+    written only by peer candidates and the LLM verifier from public task
+    material, never by the official evaluator. The projection keeps the
+    template and the projected entries but performs a closed-field check so
+    the host cannot smuggle arbitrary shapes through the cache channel.
+    """
+    if not isinstance(snapshot, dict) or not set(snapshot) <= {
+        "sections", "entries", "total_records", "updates_allowed",
+    }:
+        return _INVALID_BLIND_RESPONSE
+    sections = snapshot.get("sections")
+    entries = snapshot.get("entries")
+    if not isinstance(sections, list) or not isinstance(entries, list):
+        return _INVALID_BLIND_RESPONSE
+    projected_sections: list[dict[str, Any]] = []
+    for section in sections:
+        if not isinstance(section, dict) or not set(section) <= _BLIND_CACHE_SECTION_FIELDS:
+            return _INVALID_BLIND_RESPONSE
+        if not isinstance(section.get("key"), str) or not section["key"]:
+            return _INVALID_BLIND_RESPONSE
+        if not isinstance(section.get("title"), str):
+            return _INVALID_BLIND_RESPONSE
+        if not isinstance(section.get("requirement"), str):
+            return _INVALID_BLIND_RESPONSE
+        if section.get("cardinality") not in {"any", "latest"}:
+            return _INVALID_BLIND_RESPONSE
+        if type(section.get("requires_evidence")) is not bool:
+            return _INVALID_BLIND_RESPONSE
+        projected_sections.append(dict(section))
+    projected_entries: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not set(entry) <= _BLIND_CACHE_ENTRY_FIELDS:
+            return _INVALID_BLIND_RESPONSE
+        for field in ("key", "title", "section_key", "content", "writer", "record_id"):
+            if not isinstance(entry.get(field), str) or not entry[field]:
+                return _INVALID_BLIND_RESPONSE
+        for field in ("superseded_by", "evidence_ref"):
+            if entry.get(field) is not None and not isinstance(entry[field], str):
+                return _INVALID_BLIND_RESPONSE
+        projected_entries.append(dict(entry))
+    projected: dict[str, Any] = {
+        "sections": projected_sections,
+        "entries": projected_entries,
+    }
+    total_records = snapshot.get("total_records")
+    if total_records is not None and type(total_records) is not int:
+        return _INVALID_BLIND_RESPONSE
+    if total_records is not None:
+        projected["total_records"] = total_records
+    return projected
+
+
+def _blind_appended_shared_cache(
+    result: Any,
+) -> dict[str, Any] | object:
+    if not isinstance(result, dict) or not set(result) <= {
+        "section", "writer", "view",
+    }:
+        return _INVALID_BLIND_RESPONSE
+    if not isinstance(result.get("section"), str) or not result["section"]:
+        return _INVALID_BLIND_RESPONSE
+    if not isinstance(result.get("writer"), str) or not result["writer"]:
+        return _INVALID_BLIND_RESPONSE
+    view = result.get("view")
+    if not isinstance(view, list):
+        return _INVALID_BLIND_RESPONSE
+    projected_view = []
+    for entry in view:
+        if not isinstance(entry, dict) or not set(entry) <= _BLIND_CACHE_ENTRY_FIELDS:
+            return _INVALID_BLIND_RESPONSE
+        for field in ("key", "title", "section_key", "content", "writer", "record_id"):
+            if not isinstance(entry.get(field), str) or not entry[field]:
+                return _INVALID_BLIND_RESPONSE
+        for field in ("superseded_by", "evidence_ref"):
+            if entry.get(field) is not None and not isinstance(entry[field], str):
+                return _INVALID_BLIND_RESPONSE
+        projected_view.append(dict(entry))
+    return {
+        "section": result["section"],
+        "writer": result["writer"],
+        "view": projected_view,
     }
 
 
@@ -952,6 +1078,10 @@ def _blind_tool_response(
         return _blind_staged_shared_tool(result, context)
     if tool == "goal_plus_search_copy_shared_tool":
         return _blind_copied_shared_tool(result, context)
+    if tool == "goal_plus_search_read_shared_cache":
+        return _blind_shared_cache_snapshot(result)
+    if tool == "goal_plus_search_append_shared_cache":
+        return _blind_appended_shared_cache(result)
     return _INVALID_BLIND_RESPONSE
 
 
@@ -1214,6 +1344,33 @@ class WorkerToolProxy:
             raise PermissionError(
                 "Pi iteration listing accepts only the bound agent_session_id"
             )
+        if (
+            tool == "goal_plus_search_read_shared_cache"
+            and set(args) != {"agent_session_id"}
+        ):
+            raise PermissionError(
+                "Pi shared cache reads accept only the bound agent_session_id"
+            )
+        if tool == "goal_plus_search_append_shared_cache":
+            if not set(args) <= {
+                "agent_session_id",
+                "section",
+                "content",
+                "supersedes",
+                "evidence_ref",
+            }:
+                raise PermissionError(
+                    "Pi shared cache appends accept only the documented fields"
+                )
+            if not isinstance(args.get("section"), str) or not args["section"]:
+                raise PermissionError("Pi shared cache appends require a section")
+            if not isinstance(args.get("content"), str) or not args["content"]:
+                raise PermissionError("Pi shared cache appends require content")
+            for field in ("supersedes", "evidence_ref"):
+                if args.get(field) is not None and not isinstance(args[field], str):
+                    raise PermissionError(
+                        "Pi shared cache appends require string optional fields"
+                    )
         if (
             tool == "goal_plus_search_run_verifier"
             and args.get("scope", "process") != "process"

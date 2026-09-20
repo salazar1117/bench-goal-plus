@@ -128,6 +128,7 @@ class BenchmarkAgent:
         profile: str | None = None,
         task_id: str | None = None,
         shared_dir: bool = False,
+        shared_cache: bool = False,
         campaign_id: str | None = None,
         campaign_dir: Path | None = None,
         methods: Iterable[str] = (),
@@ -183,6 +184,14 @@ class BenchmarkAgent:
         ):
             raise ContractError(
                 "--shared-dir requires an explicit common-matrix Goal Plus method"
+            )
+        if shared_cache and (
+            runner_definition.kind != "common-matrix"
+            or not selected_methods
+            or any(not method.startswith("goal-plus-") for method in selected_methods)
+        ):
+            raise ContractError(
+                "--shared-cache requires an explicit common-matrix Goal Plus method"
             )
         values = (
             wall_time_seconds,
@@ -373,6 +382,7 @@ class BenchmarkAgent:
             profile=selected_profile,
             task_id=task_id,
             shared_dir=shared_dir,
+            shared_cache=shared_cache,
             methods=selected_methods,
             conditions=selected_conditions,
             seeds=selected_seeds,

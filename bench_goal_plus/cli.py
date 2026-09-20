@@ -40,6 +40,12 @@ def add_start_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="enable Goal Plus shared_dir for a common-matrix Goal Plus run",
     )
+    parser.add_argument(
+        "--shared-cache",
+        action="store_true",
+        help="enable the Goal Plus shared_cache fact plane and LLM-verifier "
+        "path-feasibility feedback for a common-matrix Goal Plus run",
+    )
     parser.add_argument("--campaign-id")
     parser.add_argument("--campaign-dir", type=Path)
     parser.add_argument("--method", action="append", default=[])
@@ -135,6 +141,7 @@ def spec_from_args(agent: BenchmarkAgent, args: argparse.Namespace):
         profile=args.profile,
         task_id=args.task_id,
         shared_dir=args.shared_dir,
+        shared_cache=args.shared_cache,
         campaign_id=args.campaign_id,
         campaign_dir=args.campaign_dir,
         methods=args.method,

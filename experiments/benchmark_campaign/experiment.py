@@ -97,6 +97,7 @@ def prepare_cell_config(
         method=method,
         task_id=args.task_id,
         shared_dir=args.shared_dir,
+        shared_cache=getattr(args, "shared_cache", False),
         condition=condition_id,
         coordination_variant=(
             condition.coordination_variant if condition is not None else None
@@ -166,6 +167,7 @@ def prepare_campaign(args: argparse.Namespace) -> int:
         "benchmarks": args.benchmarks,
         "task_id": args.task_id,
         "shared_dir": args.shared_dir,
+        "shared_cache": getattr(args, "shared_cache", False),
         "conditions": list(selected_conditions),
         "methods": args.methods,
         "seeds": args.seeds,
