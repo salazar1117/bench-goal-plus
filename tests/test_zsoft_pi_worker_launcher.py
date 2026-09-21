@@ -865,6 +865,12 @@ def test_blind_tool_proxy_exposes_only_frozen_context_and_receipt_contracts(
         "best_iteration": {"score": 1.0},
         "results_tsv": "/private/results.tsv",
         "resume": {"latest_handoff": {"summary": "private handoff"}},
+        # The host emits this unconditionally (None before the first
+        # verification); a stale source allowlist rejected every context call.
+        "verification": {
+            "process_passed": True,
+            "disposition": "private-verifier-outcome",
+        },
     }
     monkeypatch.setattr(
         "experiments.benchmark_compare.pi_worker_launcher._run_host_tool", lambda *_args: context_result
@@ -892,6 +898,8 @@ def test_blind_tool_proxy_exposes_only_frozen_context_and_receipt_contracts(
         "private",
         "independent audit",
         "Commit the artifact",
+        "process_passed",
+        "private-verifier-outcome",
     ):
         assert hidden not in serialized
 

@@ -1598,6 +1598,68 @@ def finalize_posthoc_official_selection(
             }
         )
 
+    # Flag eligible iterations whose materialized artifacts are byte-identical.
+    # Identical artifacts across candidates usually mean a host-side salvage
+    # copy or another homogenization path, not independent worker results; the
+    # artifact cache then reports one score for all of them. This is a warning
+    # only — selection and scores stay exactly as the contract defines them.
+    snapshot_groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        snapshot = row.get("snapshot_sha256")
+        if isinstance(snapshot, str):
+            snapshot_groups.setdefault(snapshot, []).append(
+                {
+                    "run_id": row["run_id"],
+                    "candidate_id": row["candidate_id"],
+                    "iteration": row["iteration"],
+                    "artifact_hash": row.get("artifact_hash"),
+                }
+            )
+    duplicate_artifact_groups: list[dict[str, Any]] = []
+    for snapshot, members in sorted(snapshot_groups.items()):
+        if len(members) < 2:
+            continue
+        duplicate_artifact_groups.append(
+            {
+                "snapshot_sha256": snapshot,
+                "artifact_hashes": sorted(
+                    {
+                        member["artifact_hash"]
+                        for member in members
+                        if isinstance(member.get("artifact_hash"), str)
+                    }
+                ),
+                "cross_candidate": len(
+                    {member["candidate_id"] for member in members}
+                )
+                > 1,
+                "iterations": members,
+            }
+        )
+    warnings: list[str] = []
+    cross_candidate_groups = [
+        group for group in duplicate_artifact_groups if group["cross_candidate"]
+    ]
+    if cross_candidate_groups:
+        affected = sum(
+            len(group["iterations"]) for group in cross_candidate_groups
+        )
+        warnings.append(
+            f"identical_artifacts_across_candidates: {affected} of {len(rows)} "
+            f"eligible iterations in {len(cross_candidate_groups)} artifact "
+            "group(s) share byte-identical submission artifacts across different "
+            "candidates; their artifact-cache scores reuse one official "
+            "evaluation and candidate diversity may be compromised (for example "
+            "by a host-side salvage copy). Selection and scores are unchanged; "
+            "inspect the run before comparing methods."
+        )
+    elif duplicate_artifact_groups:
+        warnings.append(
+            "identical_artifacts_within_candidate: some eligible iterations of "
+            "the same candidate share byte-identical submission artifacts and "
+            "reuse one official evaluation through the artifact cache."
+        )
+
     if not errors:
         metric_name = contract["metric_name"]
         selected_row = min(
@@ -1632,6 +1694,8 @@ def finalize_posthoc_official_selection(
             "eligible_iteration_count": len(rows),
             "unique_artifact_count": len(cache),
             "official_evaluator_calls": official_calls,
+            "duplicate_artifact_group_count": len(duplicate_artifact_groups),
+            "warnings": list(warnings),
             "score_record_path": str(score_record_path),
         }
         selected_artifact = artifact_paths[
@@ -1665,6 +1729,8 @@ def finalize_posthoc_official_selection(
         "unique_artifact_count": len(cache),
         "official_evaluator_calls": official_calls,
         "artifact_cache_hits": cache_hits,
+        "duplicate_artifact_groups": duplicate_artifact_groups,
+        "warnings": warnings,
         "selected": selected,
         "scores": rows,
         "errors": errors,

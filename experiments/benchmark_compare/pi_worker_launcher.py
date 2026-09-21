@@ -14,9 +14,11 @@ import stat
 import subprocess
 import sys
 import threading
+import traceback
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +28,12 @@ TOOL_SOCKET_ENV = "BENCH_GOAL_PLUS_PI_TOOL_SOCKET"
 REAL_PI_BIN_ENV = "BENCH_GOAL_PLUS_REAL_PI_BIN"
 LAUNCH_CONTEXT_VERSION = 1
 _MAX_PROXY_REQUEST_BYTES = 1024 * 1024
+# Host-side diagnostics for worker-facing rejections. Blind mode must keep
+# returning an opaque rejection, so the real cause is recorded next to the
+# other Goal Plus host logs instead of being discarded.
+_PROXY_ERROR_LOG_DIR = "pi-worker-proxy"
+_PROXY_LOG_TEXT_CAP = 4000
+_PROXY_LOG_ARGS_CAP = 2000
 _MAX_UNIX_SOCKET_PATH_BYTES = 103
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PATH_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -122,6 +130,7 @@ _BLIND_CONTEXT_SOURCE_FIELDS = {
     "shared_cache",
     "supplemental_evaluation_enabled",
     "tool_family_catalog",
+    "verification",
     "workspace_access",
     "workspace_ledger_projection",
 }
@@ -241,12 +250,16 @@ _BLIND_ITERATION_SOURCE_FIELDS = {
     "shared_tool_staged_bytes",
     "shared_tool_staged_entries",
     "shared_tool_staged_file_count",
+    "shared_tool_staging_dir",
     "shared_tools",
+    "settlement_receipt",
+    "settlement_sequence",
     "state",
     "summary",
     "toolization_advisories",
     "toolization_decision",
     "touched_denied_files",
+    "verifier_submission",
     "workspace_git_head_after_settlement",
     "workspace_artifact_after_settlement",
 }
@@ -803,11 +816,22 @@ def _blind_appended_shared_cache(
 
 def _blind_iteration_receipts(
     result: Any, context: LaunchContext
-) -> list[dict[str, Any]] | object:
-    if not isinstance(result, list):
+) -> list[dict[str, Any]] | dict[str, Any] | object:
+    items = result
+    envelope: dict[str, Any] | None = None
+    if isinstance(result, dict) and set(result) == {
+        "items", "next_offset", "total",
+    }:
+        # The host paginates iteration listings; project the page shape.
+        items = result["items"]
+        envelope = {
+            "next_offset": result["next_offset"],
+            "total": result["total"],
+        }
+    if not isinstance(items, list):
         return _INVALID_BLIND_RESPONSE
     receipts: list[dict[str, Any]] = []
-    for item in result:
+    for item in items:
         if isinstance(item, dict) and set(item) == _BLIND_ITERATION_RECEIPT_FIELDS:
             if (
                 item["run_id"] != context.run_id
@@ -831,6 +855,8 @@ def _blind_iteration_receipts(
         if type(iteration) is not int or iteration < 1:
             return _INVALID_BLIND_RESPONSE
         receipts.append({"iteration": iteration, "recorded": True})
+    if envelope is not None:
+        return {"items": receipts, **envelope}
     return receipts
 
 
@@ -1151,6 +1177,57 @@ class WorkerToolProxy:
         self.host_environment["GOAL_PLUS_AGENT_SESSION_ID"] = context.agent_session_id
         self._server: _ThreadingUnixServer | None = None
         self._thread: threading.Thread | None = None
+        self._log_lock = threading.Lock()
+
+    def _log_rejection(
+        self,
+        stage: str,
+        exc: BaseException,
+        *,
+        tool: str | None = None,
+        args: Any = None,
+        note: str | None = None,
+    ) -> None:
+        """Record a swallowed worker-facing failure on the host side.
+
+        Blind evaluation collapses every proxy failure into one opaque
+        rejection; without this log the underlying cause (for example a host
+        tool's stderr) is unrecoverable after the run. The log lives under the
+        real Goal Plus root's host-logs, which workers never see.
+        """
+
+        def clip(value: Any, limit: int) -> str:
+            text = value if isinstance(value, str) else json.dumps(
+                value, ensure_ascii=False, default=str,
+            )
+            return text if len(text) <= limit else f"{text[:limit]}...<{len(text)} chars>"
+
+        record = {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "agent_session_id": self.context.agent_session_id,
+            "run_id": self.context.run_id,
+            "candidate_id": self.context.candidate_id,
+            "evaluation_mode": self.evaluation_mode,
+            "stage": stage,
+            "tool": tool,
+            "error_type": type(exc).__name__,
+            "error": clip(str(exc), _PROXY_LOG_TEXT_CAP),
+            "traceback": clip("".join(traceback.format_exception(exc)), _PROXY_LOG_TEXT_CAP),
+            "args": clip(args, _PROXY_LOG_ARGS_CAP) if args is not None else None,
+            "note": note,
+        }
+        try:
+            target = (
+                self.root / "host-logs" / _PROXY_ERROR_LOG_DIR
+                / f"{self.context.agent_session_id}.jsonl"
+            )
+            with self._log_lock:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:
+            # Diagnostics must never break the worker-facing response path.
+            pass
 
     def start(self) -> None:
         self.socket_dir.mkdir(parents=True, mode=0o700, exist_ok=False)
@@ -1167,6 +1244,12 @@ class WorkerToolProxy:
                         request = json.loads(raw.decode("utf-8"))
                         response = proxy.dispatch(request)
                     except Exception as exc:  # noqa: BLE001
+                        proxy._log_rejection(
+                            "dispatch",
+                            exc,
+                            tool=request.get("tool") if isinstance(request, dict) else None,
+                            args=request.get("args") if isinstance(request, dict) else None,
+                        )
                         response = (
                             dict(_BLIND_RESPONSE_REJECTED)
                             if proxy.evaluation_mode == "blind"
@@ -1240,11 +1323,24 @@ class WorkerToolProxy:
                 and self.evaluation_mode == "visible"
             ):
                 self._project_worker_generation(result)
-        except Exception:  # workers must not receive raw host exceptions
+        except Exception as exc:  # workers must not receive raw host exceptions
+            self._log_rejection("host_tool", exc, tool=str(tool), args=args)
             return dict(_BLIND_RESPONSE_REJECTED)
         if self.evaluation_mode == "blind":
+            host_result = result
             result = _blind_tool_response(str(tool), result, self.context)
             if result is _INVALID_BLIND_RESPONSE:
+                self._log_rejection(
+                    "blind_projection",
+                    ValueError("blind projection rejected the host tool result"),
+                    tool=str(tool),
+                    args=args,
+                    note=(
+                        f"host_result_keys={','.join(sorted(host_result))}"
+                        if isinstance(host_result, dict)
+                        else f"host_result_type={type(host_result).__name__}"
+                    ),
+                )
                 return dict(_BLIND_RESPONSE_REJECTED)
         return {
             "ok": True,
