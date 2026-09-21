@@ -421,14 +421,11 @@ def render_goal(
             )
             + (
                 "- Set top-level `shared_cache.enabled=true` with "
-                '`shared_cache.sections=[{"key":"trigger_evidence","title":"Trigger preconditions","requirement":"One objective precondition chain (call site, guarding condition, required state) that a reported vulnerability needs to be reachable, stated so a peer can re-check it against source","cardinality":"any","requires_evidence":true},{"key":"path_feasibility","title":"Feasible path sketches","requirement":"One candidate-to-sink control/data path for a reported vulnerability with file/function/line anchors and the step that makes it feasible or blocks it","cardinality":"any","requires_evidence":true},{"key":"fp_signals","title":"False-positive signals","requirement":"One objective reason a reported vulnerability is likely not exploitable (unreachable branch, sanitized input, wrong location anchor, bug_type mismatch)","cardinality":"any","requires_evidence":false},{"key":"verifier_feasibility_verdicts","title":"Verifier feasibility verdicts","requirement":"LLM-verifier per-finding feasibility conclusions with the report anchor and the decisive path evidence or blocking fact","cardinality":"any","requires_evidence":false}]`, '
+                '`shared_cache.sections=[{"key":"function_signatures","title":"Function signatures","requirement":"One function per entry. subject=<module.function>. content uses the fixed structure: signature (verbatim signature); pure (whether the function is pure); notes (side effects, global state, or non-local writes, or none). Correct a changed signature with supersedes instead of appending a parallel entry.","cardinality":"any","requires_evidence":false},{"key":"value_ranges","title":"Variable value ranges","requirement":"One (function, variable, direction) triple per entry. subject=<function>#<variable>. content uses the fixed structure: direction=input|output|intermediate; range (interval, enumeration, or predicate, e.g. [0,65536) or {None,\'\'}); basis (how the range was obtained: concrete observation, static derivation, or assumption); confidence=observed|derived|assumed. When a more precise range is found for the same subject, it must supersede the older entry instead of appending a looser parallel one.","cardinality":"any","requires_evidence":false},{"key":"fp_verdicts","title":"FP verdicts","requirement":"One finding per entry. subject=<file:line>#<bug_type>. content uses the fixed structure: verdict=fp|tp|uncertain; path (source-to-sink function chain covered by this verdict); basis (value-range propagation chain behind the verdict, citing record_id of the value_ranges entries used); notes. Correct an earlier verdict with supersedes.","cardinality":"any","requires_evidence":false}]`, '
+                '`shared_cache.verifier_input=false`, '
+                '`shared_cache.verifier_updates=false`, '
                 '`shared_cache.max_records=200`, and '
                 '`shared_cache.max_content_chars=2000`.\n'
-                "- Set `strategy.verifier.scores=[\"correctness_gap\","
-                "\"validation_gap\"]` so the LLM verifier assesses every settled "
-                "attempt against the shared cache's path-evidence sections; keep "
-                "`strategy.selection.ranking_keys=[\"hard_score\"]` unchanged so "
-                "verdicts never alter the public selection rule.\n"
                 if shared_cache_enabled
                 else ""
             )
@@ -494,14 +491,11 @@ def render_goal(
         )
         + (
             "- Set top-level `shared_cache.enabled=true` with "
-            '`shared_cache.sections=[{"key":"trigger_evidence","title":"Trigger preconditions","requirement":"One objective precondition chain (call site, guarding condition, required state) that a reported vulnerability needs to be reachable, stated so a peer can re-check it against source","cardinality":"any","requires_evidence":true},{"key":"path_feasibility","title":"Feasible path sketches","requirement":"One candidate-to-sink control/data path for a reported vulnerability with file/function/line anchors and the step that makes it feasible or blocks it","cardinality":"any","requires_evidence":true},{"key":"fp_signals","title":"False-positive signals","requirement":"One objective reason a reported vulnerability is likely not exploitable (unreachable branch, sanitized input, wrong location anchor, bug_type mismatch)","cardinality":"any","requires_evidence":false},{"key":"verifier_feasibility_verdicts","title":"Verifier feasibility verdicts","requirement":"LLM-verifier per-finding feasibility conclusions with the report anchor and the decisive path evidence or blocking fact","cardinality":"any","requires_evidence":false}]`, '
+            '`shared_cache.sections=[{"key":"function_signatures","title":"Function signatures","requirement":"One function per entry. subject=<module.function>. content uses the fixed structure: signature (verbatim signature); pure (whether the function is pure); notes (side effects, global state, or non-local writes, or none). Correct a changed signature with supersedes instead of appending a parallel entry.","cardinality":"any","requires_evidence":false},{"key":"value_ranges","title":"Variable value ranges","requirement":"One (function, variable, direction) triple per entry. subject=<function>#<variable>. content uses the fixed structure: direction=input|output|intermediate; range (interval, enumeration, or predicate, e.g. [0,65536) or {None,\'\'}); basis (how the range was obtained: concrete observation, static derivation, or assumption); confidence=observed|derived|assumed. When a more precise range is found for the same subject, it must supersede the older entry instead of appending a looser parallel one.","cardinality":"any","requires_evidence":false},{"key":"fp_verdicts","title":"FP verdicts","requirement":"One finding per entry. subject=<file:line>#<bug_type>. content uses the fixed structure: verdict=fp|tp|uncertain; path (source-to-sink function chain covered by this verdict); basis (value-range propagation chain behind the verdict, citing record_id of the value_ranges entries used); notes. Correct an earlier verdict with supersedes.","cardinality":"any","requires_evidence":false}]`, '
+            '`shared_cache.verifier_input=false`, '
+            '`shared_cache.verifier_updates=false`, '
             '`shared_cache.max_records=200`, and '
             '`shared_cache.max_content_chars=2000`.\n'
-            "- Set `strategy.verifier.scores=[\"correctness_gap\","
-            "\"validation_gap\"]` so the LLM verifier assesses every settled "
-            "attempt against the shared cache's path-evidence sections; keep "
-            "selection ranking keys unchanged so verdicts never alter the "
-            "selection rule.\n"
             if shared_cache_enabled
             else ""
         )

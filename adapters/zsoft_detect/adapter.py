@@ -178,6 +178,38 @@ def bench_contract(
     return json.loads(completed.stdout)
 
 
+TASK_SKILLS_SOURCE = Path(__file__).resolve().parent / "skills"
+
+
+def copy_task_skills(workspace: Path) -> list[str]:
+    """Copy adapter-owned task-local Skills into the workspace.
+
+    Goal Plus discovers Git-tracked ``.agents/skills/<name>/SKILL.md`` bundles
+    at freeze time and instructs every candidate worker to read them, so the
+    copies must exist before ``init_git`` commits the workspace.
+    """
+    copied: list[str] = []
+    if not TASK_SKILLS_SOURCE.is_dir():
+        return copied
+    for skill_dir in sorted(TASK_SKILLS_SOURCE.iterdir()):
+        skill_file = skill_dir / "SKILL.md"
+        if not skill_dir.is_dir() or not skill_file.is_file():
+            continue
+        if skill_dir.is_symlink() or skill_file.is_symlink():
+            raise AdapterError(
+                f"task-local Skill cannot be a symlink: {skill_dir.name}"
+            )
+        destination = workspace / ".agents" / "skills" / skill_dir.name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(
+            skill_dir,
+            destination,
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
+        copied.append(f".agents/skills/{skill_dir.name}/SKILL.md")
+    return copied
+
+
 def task_text(project: str, contract: dict[str, Any]) -> str:
     roots = ", ".join(contract["scan_roots"]) or "(whole repository)"
     bug_types = ", ".join(
@@ -303,6 +335,7 @@ def materialize_workspace(
         workspace / PUBLIC_CHECKER_NAME,
         follow_symlinks=False,
     )
+    copy_task_skills(workspace)
     (workspace / ".gitignore").write_text(
         ".bench-runtime/\n.gp/\n.codex-log/\n__pycache__/\n*.pyc\n"
     )
