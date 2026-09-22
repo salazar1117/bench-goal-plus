@@ -355,6 +355,7 @@ def materialize_workspace(
         "evaluation_mode": EVALUATION_MODE,
         "requires_protected_pi_workers": REQUIRES_PROTECTED_PI_WORKERS,
         "public_validation_kind": DETECT_VALIDATION_KIND,
+        "scan_roots": list(contract.get("scan_roots") or []),
         "primary_metric": GOAL_PLUS_PROCESS_METRIC,
         "direction": DIRECTION,
     }
@@ -594,7 +595,12 @@ def evaluate_workspace(
     runtime_dir, budget = claim_evaluator_call(workspace, mode)
     ensure_single_final_claim(mode, budget)
     submission = workspace / ARTIFACT_NAME
-    public_diagnostics = validate_detect_submission(submission)
+    public_diagnostics = validate_detect_submission(
+        submission,
+        scan_roots=zsoft_blind.validated_scan_roots_config(
+            metadata.get("scan_roots")
+        ),
+    )
     format_valid = diagnostics_valid(public_diagnostics)
     if mode == "public":
         report = {

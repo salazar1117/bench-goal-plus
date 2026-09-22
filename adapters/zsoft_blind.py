@@ -60,7 +60,44 @@ def read_regular_file(
     return payload, len(payload), None
 
 
-def _finding_shape_errors(payload: Any) -> list[str]:
+def _normalized_repo_path(value: str) -> str:
+    """Mirror the evaluator's path normalization for repo-relative paths."""
+    result = value.strip()
+    while result.startswith("./"):
+        result = result[2:]
+    return result
+
+
+def validated_scan_roots_config(value: Any) -> list[str]:
+    """Validate the scan-root list from task metadata, fail closed."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or not item.strip() for item in value
+    ):
+        raise ValueError("task scan_roots must be a list of non-empty strings")
+    roots: list[str] = []
+    for item in value:
+        normalized = _normalized_repo_path(item)
+        relative = Path(normalized)
+        if not normalized or relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(
+                f"task scan root is not a confined relative path: {item!r}"
+            )
+        roots.append(relative.as_posix())
+    return roots
+
+
+def _within_scan_roots(path: str, roots: list[str]) -> bool:
+    normalized = _normalized_repo_path(path)
+    return any(
+        normalized == root or normalized.startswith(root + "/") for root in roots
+    )
+
+
+def _finding_shape_errors(
+    payload: Any, scan_roots: list[str] | None = None
+) -> list[str]:
     errors: list[str] = []
     if not isinstance(payload, dict):
         return ["finding must be a JSON object"]
@@ -89,6 +126,12 @@ def _finding_shape_errors(payload: Any) -> list[str]:
             errors.append("location.path must be a non-empty string")
         elif location_path.startswith("/") or ".." in Path(location_path).parts:
             errors.append("location.path must be a confined relative path")
+        elif scan_roots and not _within_scan_roots(location_path, scan_roots):
+            errors.append(
+                "location.path must be repo-relative (no workspace prefix)"
+                " and start with one of the scan roots: "
+                + ", ".join(scan_roots)
+            )
         function = location.get("function")
         if function is not None and (
             not isinstance(function, str) or not function
@@ -123,7 +166,9 @@ def _finding_shape_errors(payload: Any) -> list[str]:
     return errors
 
 
-def validate_detect_submission(directory: Path) -> dict[str, Any]:
+def validate_detect_submission(
+    directory: Path, *, scan_roots: list[str] | None = None
+) -> dict[str, Any]:
     diagnostics: dict[str, Any] = {
         "check": DETECT_VALIDATION_KIND,
         "json_file_count": 0,
@@ -192,7 +237,7 @@ def validate_detect_submission(directory: Path) -> dict[str, Any]:
                 }
             )
             continue
-        for message in _finding_shape_errors(finding):
+        for message in _finding_shape_errors(finding, scan_roots):
             errors.append({"file": entry.name, "message": message})
     return diagnostics
 
@@ -253,7 +298,8 @@ def run_public_check(workspace: Path) -> dict[str, Any]:
     artifact = _safe_artifact_path(workspace, metadata.get("artifact_name"))
     kind = metadata.get("public_validation_kind")
     if kind == DETECT_VALIDATION_KIND:
-        diagnostics = validate_detect_submission(artifact)
+        scan_roots = validated_scan_roots_config(metadata.get("scan_roots"))
+        diagnostics = validate_detect_submission(artifact, scan_roots=scan_roots)
     elif kind == L1_VALIDATION_KIND:
         max_bytes = metadata.get("submission_max_bytes")
         if type(max_bytes) is not int or max_bytes < 1:

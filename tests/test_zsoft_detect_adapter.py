@@ -13,6 +13,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from adapters import zsoft_blind
 from adapters.zsoft_detect import adapter
 from experiments.benchmark_compare import experiment as benchmark_experiment
 
@@ -125,6 +126,7 @@ class AdapterContractTest(unittest.TestCase):
         self.assertFalse((workspace / "source" / ".git").exists())
         metadata = json.loads((workspace / "task.json").read_text())
         self.assertEqual(metadata["source_revision"], commit)
+        self.assertEqual(metadata["scan_roots"], contract["scan_roots"])
         self.assertNotIn("upstream_root", metadata)
         self.assertEqual(metadata["primary_metric"], "format_valid")
         self.assertTrue((workspace / "public_check.py").is_file())
@@ -719,6 +721,137 @@ class AdapterContractTest(unittest.TestCase):
                 self.assertFalse(benchmark_experiment._publicly_compliant_iteration(
                     {**eligible, **changed}
                 ))
+
+
+class ScanRootPathBaseTest(unittest.TestCase):
+    """Workspace-prefixed finding paths are format errors.
+
+    A finding whose location.path does not sit under a declared scan root can
+    never match the official evaluator, so the only worker-visible feedback
+    channel (the public format check) must reject it at submission time.
+    """
+
+    @staticmethod
+    def _finding(path: str) -> dict:
+        return {
+            "location": {
+                "path": path,
+                "function": "example_function",
+                "start_line": 1,
+                "end_line": 2,
+            },
+            "bug_type": "cwe_125",
+            "root_cause": {"cause": "c", "trigger": "t", "impact": "i"},
+        }
+
+    def _submission(self, paths: list[str]) -> Path:
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        submission = tmp / "submission"
+        submission.mkdir()
+        for index, path in enumerate(paths):
+            (submission / f"finding{index:02d}.json").write_text(
+                json.dumps(self._finding(path))
+            )
+        return submission
+
+    def test_workspace_prefixed_path_is_rejected_with_the_roots(self) -> None:
+        diagnostics = zsoft_blind.validate_detect_submission(
+            self._submission(["source/src/civetweb.c"]),
+            scan_roots=["src/civetweb.c"],
+        )
+        self.assertFalse(zsoft_blind.diagnostics_valid(diagnostics))
+        [error] = diagnostics["errors"]
+        self.assertIn("scan roots", error["message"])
+        self.assertIn("src/civetweb.c", error["message"])
+
+    def test_repo_relative_paths_inside_roots_are_accepted(self) -> None:
+        diagnostics = zsoft_blind.validate_detect_submission(
+            self._submission(
+                [
+                    "src/civetweb.c",
+                    "./src/civetweb.c",
+                    "src/ulock/dlock/lib/server/dlock_server.cpp",
+                ]
+            ),
+            scan_roots=["src/civetweb.c", "src/ulock/dlock/lib/server"],
+        )
+        self.assertTrue(zsoft_blind.diagnostics_valid(diagnostics))
+
+    def test_missing_or_empty_roots_keep_whole_repository_behavior(self) -> None:
+        submission = self._submission(["source/src/civetweb.c", "anywhere/x.c"])
+        for roots in (None, []):
+            with self.subTest(roots=roots):
+                diagnostics = zsoft_blind.validate_detect_submission(
+                    submission, scan_roots=roots
+                )
+                self.assertTrue(zsoft_blind.diagnostics_valid(diagnostics))
+
+    def test_scan_roots_config_is_validated_fail_closed(self) -> None:
+        for bad in (
+            ["/absolute"],
+            ["../escape"],
+            ["valid/../valid"],
+            "not-a-list",
+            [5],
+            ["ok", 7],
+        ):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    zsoft_blind.validated_scan_roots_config(bad)
+
+    def test_public_check_reads_scan_roots_from_task_metadata(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        workspace = tmp / "workspace"
+        submission = workspace / "submission"
+        submission.mkdir(parents=True)
+        (submission / "finding01.json").write_text(
+            json.dumps(self._finding("source/src/civetweb.c"))
+        )
+        base_metadata = {
+            "artifact_name": "submission",
+            "public_validation_kind": "detect_json_findings",
+        }
+        (workspace / "task.json").write_text(
+            json.dumps({**base_metadata, "scan_roots": ["src/civetweb.c"]})
+        )
+        report = zsoft_blind.run_public_check(workspace)
+        self.assertFalse(report["valid"])
+        self.assertEqual(report[zsoft_blind.PUBLIC_METRIC], 0.0)
+
+        (workspace / "task.json").write_text(json.dumps(base_metadata))
+        report = zsoft_blind.run_public_check(workspace)
+        self.assertTrue(report["valid"])
+
+    def test_evaluate_workspace_applies_the_scan_root_base(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        workspace = tmp / "workspace"
+        submission = workspace / adapter.ARTIFACT_NAME
+        submission.mkdir(parents=True)
+        (submission / "finding01.json").write_text(
+            json.dumps(self._finding("source/src/civetweb.c"))
+        )
+        (workspace / "task.json").write_text(
+            json.dumps(
+                {
+                    "task_id": adapter.TASK_ID,
+                    "project_id": adapter.DEFAULT_PROJECT,
+                    "commit": adapter.project_commit(adapter.DEFAULT_PROJECT),
+                    "scan_roots": ["src/civetweb.c"],
+                }
+            )
+        )
+
+        with mock.patch.object(adapter, "_run") as scorer:
+            report = adapter.evaluate_workspace(
+                workspace, Path("/not-visible-to-public-check"), "public"
+            )
+
+        scorer.assert_not_called()
+        self.assertFalse(report["valid"])
+        self.assertEqual(report[adapter.GOAL_PLUS_PROCESS_METRIC], 0.0)
 
 
 if __name__ == "__main__":
