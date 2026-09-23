@@ -1208,5 +1208,150 @@ class OpenEvolveComparisonTest(unittest.TestCase):
             self.assertEqual(result["returncode"], 0)
 
 
+class PublicGateSelectionRuleTest(unittest.TestCase):
+    """The frozen public-gate rule mirrors the Goal Plus selector's tie-break.
+
+    Blind runs settle every compliant iteration at the same gate score, so
+    the winner is decided purely by the tie-break: the run's
+    ``best_candidate_id`` (the candidate that most recently settled at the
+    best hard score) wins, falling back to pool order (lowest candidate id).
+    """
+
+    @staticmethod
+    def _iteration(number: int, *, score: float = 1.0, passed: bool = True) -> dict:
+        return {
+            "iteration": number,
+            "git_head": f"{number:040x}",
+            "score": score,
+            "process_passed": passed,
+            "git_artifact_clean": True,
+            "disposition": "retain",
+        }
+
+    def _write_run(
+        self,
+        root: Path,
+        *,
+        best_candidate_id: str | None,
+        candidates: dict[str, list[dict]],
+    ) -> Path:
+        run_dir = root / ".gp" / "runs" / "run_test"
+        for candidate_id, iterations in candidates.items():
+            directory = run_dir / "candidates" / candidate_id
+            directory.mkdir(parents=True)
+            (directory / "candidate.json").write_text(
+                json.dumps({"candidate_id": candidate_id, "iterations": iterations})
+                + "\n"
+            )
+        run_path = run_dir / "run.json"
+        run_path.write_text(
+            json.dumps(
+                {
+                    "run_id": "run_test",
+                    "state": "ready_to_promote",
+                    "best_candidate_id": best_candidate_id,
+                }
+            )
+            + "\n"
+        )
+        return run_path
+
+    def test_recent_best_candidate_wins_the_tie(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_path = self._write_run(
+                Path(directory),
+                best_candidate_id="c003",
+                candidates={
+                    "c001": [self._iteration(5)],
+                    "c003": [self._iteration(6), self._iteration(7)],
+                },
+            )
+            expected = experiment._expected_public_gate_selection(run_path)
+            self.assertEqual(expected["selected_candidate_id"], "c003")
+            self.assertEqual(expected["selected_iteration"], 7)
+            experiment._validate_existing_public_gate_selection(
+                run_path,
+                {
+                    "selected_candidate_id": "c003",
+                    "selected_score": 1.0,
+                    "selected_iteration": 7,
+                    "selected_git_head": expected["selected_git_head"],
+                },
+            )
+
+    def test_lowest_candidate_id_is_the_fallback(self) -> None:
+        for best_candidate_id in (None, "c002"):
+            with tempfile.TemporaryDirectory() as directory:
+                run_path = self._write_run(
+                    Path(directory),
+                    best_candidate_id=best_candidate_id,
+                    candidates={
+                        "c001": [self._iteration(5)],
+                        "c002": [self._iteration(3, passed=False)],
+                        "c003": [self._iteration(7)],
+                    },
+                )
+                with self.subTest(best_candidate_id=best_candidate_id):
+                    expected = experiment._expected_public_gate_selection(run_path)
+                    self.assertEqual(expected["selected_candidate_id"], "c001")
+                    self.assertEqual(expected["selected_iteration"], 5)
+
+    def test_divergent_selection_is_still_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_path = self._write_run(
+                Path(directory),
+                best_candidate_id="c003",
+                candidates={"c001": [self._iteration(5)], "c003": [self._iteration(7)]},
+            )
+            with self.assertRaisesRegex(
+                RuntimeError, "violates the frozen public-gate selection rule"
+            ):
+                experiment._validate_existing_public_gate_selection(
+                    run_path,
+                    {
+                        "selected_candidate_id": "c001",
+                        "selected_score": 1.0,
+                        "selected_iteration": 5,
+                        "selected_git_head": f"{5:040x}",
+                    },
+                )
+
+    def test_gate_still_fails_closed_without_compliant_iterations(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_path = self._write_run(
+                Path(directory),
+                best_candidate_id="c001",
+                candidates={"c001": [self._iteration(1, passed=False)]},
+            )
+            with self.assertRaisesRegex(RuntimeError, "no publicly compliant"):
+                experiment._expected_public_gate_selection(run_path)
+
+    def test_gate_still_rejects_non_uniform_compliant_scores(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_path = self._write_run(
+                Path(directory),
+                best_candidate_id="c002",
+                candidates={
+                    "c001": [self._iteration(1)],
+                    "c002": [self._iteration(2, score=0.5)],
+                },
+            )
+            with self.assertRaisesRegex(RuntimeError, "non-uniform passing scores"):
+                experiment._expected_public_gate_selection(run_path)
+
+    def test_prepare_pins_the_preferred_marker_to_the_expected_winner(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_path = self._write_run(
+                Path(directory),
+                best_candidate_id=None,
+                candidates={"c001": [self._iteration(5)], "c003": [self._iteration(7)]},
+            )
+            expected = experiment._prepare_public_gate_selection(run_path)
+            self.assertEqual(expected["selected_candidate_id"], "c001")
+            self.assertEqual(
+                json.loads(run_path.read_text())["best_candidate_id"], "c001"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

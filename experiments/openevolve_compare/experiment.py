@@ -92,7 +92,7 @@ DEFAULT_MODEL = "gpt-5.6-luna"
 DEFAULT_WALL_TIME_SECONDS = 300
 DEFAULT_CONCURRENCY = 2
 DEFAULT_REASONING_EFFORT = "high"
-PUBLIC_GATE_SELECTION_RULE = "lowest_candidate_id_latest_compliant_iteration"
+PUBLIC_GATE_SELECTION_RULE = "goal_plus_preferred_candidate_latest_compliant_iteration"
 REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh")
 CODEX_SANDBOX = "danger-full-access"
 CODEX_PROVIDER_ID = "bench_proxy"
@@ -1907,7 +1907,16 @@ def _goal_plus_runtime_types() -> tuple[type[Any], type[Any], type[Any]]:
 
 
 def _expected_public_gate_selection(run_path: Path) -> dict[str, Any]:
-    expected: dict[str, Any] | None = None
+    """Recompute the Goal Plus selector's winner from public candidate evidence.
+
+    The selector breaks score ties by preferring the run's
+    ``best_candidate_id`` — the candidate that most recently settled at the
+    best hard score — and otherwise falls back to selection-pool order, which
+    starts at the lowest candidate id. Within the winning candidate the
+    latest compliant iteration wins because pool options are appended
+    newest-first.
+    """
+    compliant_by_candidate: dict[str, list[dict[str, Any]]] = {}
     compliant_scores: set[float] = set()
     candidates = [
         load_json(candidate_path)
@@ -1937,20 +1946,28 @@ def _expected_public_gate_selection(run_path: Path) -> dict[str, Any]:
             and type(iteration.get("score")) in {int, float}
         ]
         if compliant:
-            latest = max(compliant, key=lambda item: item["iteration"])
             compliant_scores.update(float(item["score"]) for item in compliant)
-            if expected is None:
-                expected = {
-                    "selected_candidate_id": str(candidate["candidate_id"]),
-                    "selected_score": float(latest["score"]),
-                    "selected_iteration": int(latest["iteration"]),
-                    "selected_git_head": str(latest["git_head"]),
-                }
-    if expected is None:
+            compliant_by_candidate[str(candidate["candidate_id"])] = compliant
+    if not compliant_by_candidate:
         raise RuntimeError("no publicly compliant candidate iteration is available")
     if len(compliant_scores) != 1:
         raise RuntimeError("public gate produced non-uniform passing scores")
-    return expected
+    preferred = load_json(run_path).get("best_candidate_id")
+    selected_candidate_id = (
+        preferred
+        if isinstance(preferred, str) and preferred in compliant_by_candidate
+        else min(compliant_by_candidate)
+    )
+    latest = max(
+        compliant_by_candidate[selected_candidate_id],
+        key=lambda item: item["iteration"],
+    )
+    return {
+        "selected_candidate_id": selected_candidate_id,
+        "selected_score": float(latest["score"]),
+        "selected_iteration": int(latest["iteration"]),
+        "selected_git_head": str(latest["git_head"]),
+    }
 
 
 def _prepare_public_gate_selection(run_path: Path) -> dict[str, Any]:
