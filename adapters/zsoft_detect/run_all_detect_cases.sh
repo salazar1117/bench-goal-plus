@@ -37,7 +37,7 @@ resolve_work_dir() {
 readonly WORK_DIR="$(resolve_work_dir)"
 [[ -n "$WORK_DIR" && -f "$WORK_DIR/scripts/bench.py" ]] \
     || { printf '错误: 无法定位 bench-goal-plus 仓库根 (设置 BENCH_GOAL_PLUS_WORK_DIR 可覆盖)\n' >&2; exit 1; }
-readonly CAMPAIGN_BASE="${DETECT_CAMPAIGN_BASE:-runs/detect-deepseek-v4.1-flash-1017-1800-baseline-k1}"
+readonly CAMPAIGN_BASE="${DETECT_CAMPAIGN_BASE:-runs/detect-deepseek-v4.1-flash-1017-1800-new-k2}"
 readonly ZSOFT_CHECKOUT="$WORK_DIR/third_party/zsoft-bench"
 readonly DETECT_ROOT="$ZSOFT_CHECKOUT/benchmarks/vulnerability/zsoft-detect"
 readonly PROJECTS_DIR="$DETECT_ROOT/projects"
