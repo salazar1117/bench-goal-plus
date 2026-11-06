@@ -46,6 +46,7 @@ readonly PYTHON="$WORK_DIR/.bench-env/venv/bin/python"
 readonly EXPECTED_CASES="${DETECT_EXPECTED_CASES:-5}"
 readonly SHARED_CACHE_ENABLED="${DETECT_SHARED_CACHE:-0}"
 readonly TASK_SKILLS_ENABLED="${DETECT_SKILL:-0}"
+readonly NETWORK_ISOLATION="${DETECT_NETWORK_ISOLATION:-0}"
 
 MODE="all"
 REQUESTED_CASE_ID=""
@@ -477,10 +478,10 @@ case_status() {
 {
     printf 'ZSoft Detect 运行汇总\n'
     printf '开始时间: %s\n' "$(date --iso-8601=seconds)"
-    printf '配置: provider=%s model=%s reasoning=high T=%d K=%d C=%d R=%d skill=%s\n' \
+    printf '配置: provider=%s model=%s reasoning=high T=%d K=%d C=%d R=%d skill=%s net_isolate=%s\n' \
         "$DETECT_PROVIDER" "$DETECT_MODEL" \
         "$WALL_TIME_SECONDS" "$LIVE_SEARCH_CONCURRENCY" \
-        "$CELL_CONCURRENCY" "$REPEAT_COUNT" "$TASK_SKILLS_ENABLED"
+        "$CELL_CONCURRENCY" "$REPEAT_COUNT" "$TASK_SKILLS_ENABLED" "$NETWORK_ISOLATION"
     printf '评分策略: 搜索期间仅 format_valid；收尾后隐藏评分并记录最高 F1\n'
     printf '源码缓存: %s\n' "$SOURCE_CACHE_ROOT"
     printf '源码缓存模式: %s\n' "$SOURCE_CACHE_STORAGE_MODE"
@@ -518,6 +519,22 @@ if {
 else
     status_message "PREFLIGHT_FAILED elapsed_seconds=$(($(date +%s) - preflight_started)) log=$PREFLIGHT_LOG"
     die "运行前环境检查失败，详见 $PREFLIGHT_LOG"
+fi
+
+# Apply bench-side network isolation (blocks outbound except LLM API + DNS + loopback)
+if [[ "$NETWORK_ISOLATION" == "1" ]]; then
+    status_message "NETWORK_ISOLATION applying (allow: ${!PROVIDER_BASE_ENV:-unknown})"
+    if "$PYTHON" -c "
+from bench_goal_plus.network_isolation import NetworkIsolation
+import sys, os
+iso = NetworkIsolation(allow_endpoint=os.environ.get('${PROVIDER_BASE_ENV}', ''))
+ok = iso.apply()
+sys.exit(0 if ok else 1)
+" >>"$LOG_DIR/network_isolation.log" 2>&1; then
+        status_message "NETWORK_ISOLATION applied"
+    else
+        status_message "NETWORK_ISOLATION_FAILED (non-fatal; continuing without isolation) log=$LOG_DIR/network_isolation.log"
+    fi
 fi
 
 prepare_source_checkout() {
@@ -1120,6 +1137,15 @@ fi
         printf '全量平均 F1: %s\n' "$MEAN_F1"
     fi
 } >>"$SUMMARY_FILE"
+
+# Clean up network isolation if it was applied
+if [[ "$NETWORK_ISOLATION" == "1" ]]; then
+    "$PYTHON" -c "
+from bench_goal_plus.network_isolation import NetworkIsolation
+NetworkIsolation(allow_endpoint='').cleanup()
+" >>"$LOG_DIR/network_isolation.log" 2>&1
+    status_message "NETWORK_ISOLATION cleaned up"
+fi
 
 status_message \
     "RUN_COMPLETE planned=$TOTAL_TASK_CELLS completed=$COMPLETED_COUNT infra_error=$INFRA_COUNT mean_f1=$MEAN_F1 summary=$SUMMARY_FILE"
