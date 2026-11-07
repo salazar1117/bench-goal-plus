@@ -25,12 +25,8 @@ def preparation_ticket(root: Path, sessions: Path) -> dict:
     run = json.loads((root / "runs" / run_id / "run.json").read_text())
     if run.get("dispatch_group") is not None or run.get("invalidated_at"):
         raise RuntimeError("ForkPreparationRejected: group already started or run invalidated")
-    batch_time = candidate_host_queries(root).dispatch_batch_started_at(run_id)
-    preparation = runtime.authorization.require_fork_checkpoint_preparation(
-        run_id, batch_started_at=batch_time,
-    )
-    if not runtime.authorization.fork_preparation_resume_matches(record, preparation.event_id):
-        raise RuntimeError("ForkPreparationRejected: ordinary stop or changed preparation")
+    candidate_host_queries(root).dispatch_batch(run_id)
+    preparation = _current_preparation_event(runtime, record, run_id)
     files = list(sessions.glob(f"*_{active.session_id}.jsonl"))
     if len(files) != 1:
         raise RuntimeError("ForkPreparationRejected: missing exact native Main file")
@@ -49,8 +45,19 @@ def preparation_ticket(root: Path, sessions: Path) -> dict:
         raise RuntimeError("ForkPreparationRejected: Goal changed during admission")
     return {"goal_plus_id": record.goal_plus_id, "goal_revision": record.goal_revision,
             "session_id": active.session_id, "control_version": record.control.version,
-            "fork_preparation_event_id": preparation.event_id}
+            "fork_preparation_event_id": preparation["event_id"]}
 
+
+def _current_preparation_event(runtime: object, record: object, run_id: str) -> dict:
+    events = runtime.state.read_events(record.goal_plus_id)
+    latest = events[-1] if events else None
+    payload = (latest or {}).get("payload") or {}
+    if ((latest or {}).get("event_type") != "status_changed"
+            or payload.get("reason") != "fork_checkpoint_ready"
+            or not any(item.get("run_id") == run_id
+                       for item in payload.get("evidence") or [] if isinstance(item, dict))):
+        raise RuntimeError("ForkPreparationRejected: ordinary stop or changed preparation")
+    return latest
 
 
 def main() -> int:
