@@ -54,6 +54,7 @@ WALL_TIME_SECONDS=1800
 LIVE_SEARCH_CONCURRENCY=4
 CELL_CONCURRENCY=1
 REPEAT_COUNT=1
+GOAL_PLUS_SPAWN_MODE="${DETECT_GOAL_PLUS_SPAWN_MODE:-fresh}"
 MAX_INFRA_ATTEMPTS="${DETECT_MAX_INFRA_ATTEMPTS:-2}"
 STATUS_INTERVAL_SECONDS="${DETECT_STATUS_INTERVAL_SECONDS:-60}"
 FETCH_MISSING_SOURCES="${DETECT_FETCH_MISSING_SOURCES:-1}"
@@ -80,6 +81,9 @@ usage() {
                                 K: 每个 task cell 内部 subagent 数，默认 4
   -C, --cell-concurrency        C: 同时运行的 task cell 数，默认 1（当前仅支持 1）
   -R, --repeats                 R: 每个 case 的独立串行 campaign 数，使用 seed 1..R，默认 1
+  --goal-plus-spawn-mode MODE   Goal Plus worker 生成模式: fresh(默认)或 fork（要求
+                                K>=2；fork 走 goal_plus_search_fork + 两阶段
+                                checkpoint 准入）
   -A, --max-infra-attempts      基础设施失败时的最大尝试次数，默认 2
   -h, --help                    显示帮助
 
@@ -174,6 +178,11 @@ while (($# > 0)); do
             REPEAT_COUNT="$2"
             shift 2
             ;;
+        --goal-plus-spawn-mode)
+            (($# >= 2)) || die "$1 缺少参数"
+            GOAL_PLUS_SPAWN_MODE="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -196,6 +205,12 @@ done
     || die "C (--cell-concurrency) 必须是正整数"
 ((CELL_CONCURRENCY == 1)) \
     || die "当前 zsoft-detect common-matrix runner 尚未支持 C>1；--cell-concurrency 必须为 1"
+[[ "$GOAL_PLUS_SPAWN_MODE" == "fresh" || "$GOAL_PLUS_SPAWN_MODE" == "fork" ]] \
+    || die "--goal-plus-spawn-mode 只能是 fresh 或 fork"
+if [[ "$GOAL_PLUS_SPAWN_MODE" == "fork" ]]; then
+    ((LIVE_SEARCH_CONCURRENCY >= 2)) \
+        || die "fork 模式要求 K (--live-search-concurrency) >= 2"
+fi
 [[ "$REPEAT_COUNT" =~ ^[1-9][0-9]*$ ]] \
     || die "R (--repeats) 必须是正整数"
 [[ "$MAX_INFRA_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] \
@@ -647,6 +662,7 @@ build_bench_args() {
     if [[ "$SHARED_CACHE_ENABLED" == "1" ]]; then
         BENCH_ARGS+=(--shared-cache)
     fi
+    BENCH_ARGS+=(--goal-plus-spawn-mode "$GOAL_PLUS_SPAWN_MODE")
 }
 
 start_launch_heartbeat() {

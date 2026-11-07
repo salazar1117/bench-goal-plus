@@ -229,6 +229,61 @@ class BenchmarkCampaignTest(unittest.TestCase):
             payload = json.loads((root / "campaign/campaign.json").read_text())
             self.assertEqual(payload["task_id"], "libxml2-detect")
 
+    def test_prepare_passes_goal_plus_spawn_mode_through(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            args = campaign.build_parser().parse_args(
+                [
+                    "prepare",
+                    "--campaign-dir",
+                    str(root / "campaign"),
+                    "--benchmarks",
+                    "zsoft-detect",
+                    "--task-id",
+                    "civetweb-detect",
+                    "--methods",
+                    "goal-plus-pi",
+                    "--concurrency",
+                    "2",
+                    "--goal-plus-spawn-mode",
+                    "fork",
+                ]
+            )
+            with mock.patch.object(standalone, "prepare", return_value=0) as prepared:
+                self.assertEqual(campaign.prepare_campaign(args), 0)
+
+            prepared_args = prepared.call_args.args[0]
+            self.assertEqual(prepared_args.goal_plus_spawn_mode, "fork")
+            payload = json.loads((root / "campaign/campaign.json").read_text())
+            self.assertEqual(payload["goal_plus_spawn_mode"], "fork")
+
+    def test_prepare_rejects_fork_without_pi_worker_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = [
+                "prepare",
+                "--campaign-dir",
+                str(root / "campaign"),
+                "--benchmarks",
+                "zsoft-detect",
+                "--task-id",
+                "civetweb-detect",
+                "--goal-plus-spawn-mode",
+                "fork",
+            ]
+            with self.assertRaisesRegex(ValueError, "fork requires goal-plus-pi"):
+                campaign.prepare_campaign(
+                    campaign.build_parser().parse_args(
+                        base + ["--methods", "goal-plus-codex", "--concurrency", "2"]
+                    )
+                )
+            with self.assertRaisesRegex(ValueError, "fork requires goal-plus-pi"):
+                campaign.prepare_campaign(
+                    campaign.build_parser().parse_args(
+                        base + ["--methods", "goal-plus-pi", "--concurrency", "1"]
+                    )
+                )
+
     def test_prepare_expands_paired_condition_seed_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

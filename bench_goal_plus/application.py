@@ -145,6 +145,7 @@ class BenchmarkAgent:
         cell_concurrency: int | None = None,
         worker_runtime_seconds: int | None = None,
         worker_min_runtime_seconds: int | None = None,
+        goal_plus_spawn_mode: str | None = None,
         retain_containers: bool = False,
     ) -> CampaignSpec:
         targets, preset = self.resolve_targets(target_ids=target_ids, preset_id=preset_id)
@@ -397,6 +398,7 @@ class BenchmarkAgent:
             cell_concurrency=cell_concurrency,
             worker_runtime_seconds=worker_runtime_seconds,
             worker_min_runtime_seconds=worker_min_runtime_seconds,
+            goal_plus_spawn_mode=goal_plus_spawn_mode,
             retain_containers=retain_containers,
             campaign_dir=campaign_dir,
         )

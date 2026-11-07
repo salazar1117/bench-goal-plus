@@ -59,6 +59,7 @@ def add_start_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--cell-concurrency", type=int)
     parser.add_argument("--worker-runtime-seconds", type=int)
     parser.add_argument("--worker-min-runtime-seconds", type=int)
+    parser.add_argument("--goal-plus-spawn-mode", choices=("fresh", "fork"))
     parser.add_argument(
         "--retain-containers",
         action="store_true",
@@ -158,6 +159,7 @@ def spec_from_args(agent: BenchmarkAgent, args: argparse.Namespace):
         cell_concurrency=args.cell_concurrency,
         worker_runtime_seconds=args.worker_runtime_seconds,
         worker_min_runtime_seconds=args.worker_min_runtime_seconds,
+        goal_plus_spawn_mode=args.goal_plus_spawn_mode,
         retain_containers=args.retain_containers,
     )
 

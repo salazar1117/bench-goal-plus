@@ -87,6 +87,8 @@ class CommonMatrixRunner(BenchmarkRunner):
             command.extend(
                 ["--worker-min-runtime-seconds", str(spec.worker_min_runtime_seconds)]
             )
+        if spec.goal_plus_spawn_mode is not None:
+            command.extend(["--goal-plus-spawn-mode", spec.goal_plus_spawn_mode])
         if spec.pi_provider_id is not None:
             command.extend(
                 [

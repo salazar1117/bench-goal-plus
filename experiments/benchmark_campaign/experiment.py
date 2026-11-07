@@ -95,6 +95,7 @@ def prepare_cell_config(
     return standalone.PrepareConfig(
         benchmark=benchmark_id,
         method=method,
+        goal_plus_spawn_mode=getattr(args, "goal_plus_spawn_mode", "fresh"),
         task_id=args.task_id,
         shared_dir=args.shared_dir,
         shared_cache=getattr(args, "shared_cache", False),
@@ -154,6 +155,13 @@ def prepare_campaign(args: argparse.Namespace) -> int:
             for condition_id in selected_conditions
         ]
     )
+    spawn_mode = getattr(args, "goal_plus_spawn_mode", "fresh")
+    if spawn_mode not in {"fresh", "fork"}:
+        raise ValueError("goal_plus_spawn_mode must be fresh or fork")
+    if spawn_mode == "fork" and (
+        any(method != "goal-plus-pi" for _, method in axes) or args.concurrency < 2
+    ):
+        raise ValueError("fork requires goal-plus-pi with K >= 2")
     pi_provider = _campaign_provider(args, methods=[method for _, method in axes])
 
     campaign_dir = (args.campaign_dir or default_campaign_dir()).expanduser().absolute()
@@ -170,6 +178,7 @@ def prepare_campaign(args: argparse.Namespace) -> int:
         "shared_cache": getattr(args, "shared_cache", False),
         "conditions": list(selected_conditions),
         "methods": args.methods,
+        "goal_plus_spawn_mode": spawn_mode,
         "seeds": args.seeds,
         "model": args.model,
         "reasoning_effort": args.reasoning_effort,

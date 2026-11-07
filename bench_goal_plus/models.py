@@ -147,6 +147,7 @@ class CampaignSpec:
     cell_concurrency: int | None = None
     worker_runtime_seconds: int | None = None
     worker_min_runtime_seconds: int | None = None
+    goal_plus_spawn_mode: str | None = None
     retain_containers: bool = False
     campaign_dir: Path | None = None
 
@@ -194,6 +195,7 @@ class CampaignSpec:
             ),
             "worker_runtime_seconds": self.worker_runtime_seconds,
             "worker_min_runtime_seconds": self.worker_min_runtime_seconds,
+            "goal_plus_spawn_mode": self.goal_plus_spawn_mode,
             "retain_containers": self.retain_containers,
             "concurrency": self.concurrency(),
         }
