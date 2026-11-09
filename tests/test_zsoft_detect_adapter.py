@@ -23,6 +23,33 @@ class AdapterContractTest(unittest.TestCase):
         self.assertIn(adapter.DIRECTION, {"minimize", "maximize"})
         self.assertTrue(adapter.PRIMARY_METRIC)
         self.assertTrue(adapter.ARTIFACT_NAME)
+
+    def test_task_text_scopes_bug_types_per_target(self) -> None:
+        contract = {
+            "display_name": "Demo",
+            "version_label": "v1",
+            "scan_roots": ["src/a.c"],
+            "project_bug_types": [
+                {"id": "cwe_674", "title": "Uncontrolled Recursion"},
+                {"id": "cwe_125", "title": "Out-of-bounds Read"},
+                {"id": "cwe_401", "title": "Missing Release of Memory"},
+            ],
+            "targets": [
+                {
+                    "id": "a-core",
+                    "include": ["src/a.c"],
+                    "bug_types": ["cwe_674", "cwe_125"],
+                },
+            ],
+        }
+        text = adapter.task_text("demo", contract)
+        self.assertIn("- `a-core`: paths `src/a.c`; allowed bug types:", text)
+        self.assertIn("- `cwe_674` — Uncontrolled Recursion", text)
+        self.assertIn("- `cwe_125` — Out-of-bounds Read", text)
+        # Project-wide catalog entries outside the target allowlist must
+        # not be advertised to workers (the scorer rejects them).
+        self.assertNotIn("cwe_401", text)
+        self.assertNotIn("Allowed bug types (CWE ids or aliases)", text)
         self.assertEqual(adapter.EVALUATION_MODE, "blind")
         self.assertEqual(adapter.PRIMARY_METRIC, "f1")
         self.assertEqual(adapter.GOAL_PLUS_PROCESS_METRIC, "format_valid")

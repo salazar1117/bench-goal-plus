@@ -217,16 +217,28 @@ def copy_task_skills(workspace: Path) -> list[str]:
 
 def task_text(project: str, contract: dict[str, Any]) -> str:
     roots = ", ".join(contract["scan_roots"]) or "(whole repository)"
-    bug_types = ", ".join(
-        item["id"] for item in contract["project_bug_types"]
-    )
+    type_metadata = {item["id"]: item for item in contract["project_bug_types"]}
+    target_lines = []
+    for target in contract["targets"]:
+        includes = ", ".join(f"`{item}`" for item in target["include"])
+        types = "\n".join(
+            f"  - `{type_id}` — {type_metadata.get(type_id, {}).get('title', type_id)}"
+            for type_id in target["bug_types"]
+        )
+        target_lines.append(
+            f"- `{target['id']}`: paths {includes}; allowed bug types:\n{types}"
+        )
+    allowed_targets = "\n".join(target_lines)
     return "\n".join(
         [
             f"# ZSoft detect bench: {contract['display_name']} @ {contract['version_label']}",
             "",
             "Perform a static security audit of the source tree in `source/`.",
             f"Scan roots: {roots}.",
-            f"Allowed bug types (CWE ids or aliases): {bug_types}.",
+            "Allowed CWE bug types are scoped per target: a finding's",
+            "bug_type must appear in the allowlist of the target whose",
+            "paths cover the finding's location.",
+            allowed_targets,
             "",
             f"Write each finding as one JSON file under `{ARTIFACT_NAME}/`,",
             "matching `schemas/finding.schema.json` in the bench contract",
