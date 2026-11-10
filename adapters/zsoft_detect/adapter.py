@@ -215,6 +215,43 @@ def copy_task_skills(workspace: Path) -> list[str]:
     return copied
 
 
+META_TOOL_ENV = "BENCH_GOAL_PLUS_ZSOFT_DETECT_META_TOOL"
+META_TOOL_SRC_ENV = "BENCH_GOAL_PLUS_META_TOOL_SRC"
+DEFAULT_META_TOOL_SRC = Path("/data/disk/tangzhiyun/muyuan-meta/plugins/infra/meta-tool")
+
+
+def install_meta_tool(workspace: Path) -> str | None:
+    """Install the BATE meta-tool Pi package into the workspace (opt-in).
+
+    Runs the official installer (``install.py --pi --project <workspace>``)
+    so the project-level ``.pi/settings.json`` registers the package for the
+    Main Pi; goal-plus workers inherit the bundled read batches through the
+    package's own propagation path. The installer creates ``.meta-tool/``
+    (self-ignored in git) and needs network access for pip/npm, adding a
+    couple of minutes to prepare — opt-in via
+    ``BENCH_GOAL_PLUS_ZSOFT_DETECT_META_TOOL=1`` so meta-tool-free campaigns
+    remain the default contract.
+    """
+    if os.environ.get(META_TOOL_ENV) != "1":
+        return None
+    source = Path(os.environ.get(META_TOOL_SRC_ENV) or DEFAULT_META_TOOL_SRC)
+    installer = source / "install.py"
+    if not installer.is_file():
+        raise AdapterError(f"meta-tool installer not found: {installer}")
+    result = subprocess.run(
+        [sys.executable, str(installer), "--pi", "--project", str(workspace)],
+        capture_output=True,
+        text=True,
+        timeout=900,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AdapterError(
+            "meta-tool install failed: " + (result.stderr or result.stdout)[-800:]
+        )
+    return ".meta-tool/ (BATE Pi package installed)"
+
+
 def task_text(project: str, contract: dict[str, Any]) -> str:
     roots = ", ".join(contract["scan_roots"]) or "(whole repository)"
     type_metadata = {item["id"]: item for item in contract["project_bug_types"]}
@@ -359,6 +396,7 @@ def materialize_workspace(
         follow_symlinks=False,
     )
     copy_task_skills(workspace)
+    install_meta_tool(workspace)
     (workspace / ".gitignore").write_text(
         ".bench-runtime/\n.gp/\n.codex-log/\n__pycache__/\n*.pyc\n"
     )

@@ -50,6 +50,66 @@ class AdapterContractTest(unittest.TestCase):
         # not be advertised to workers (the scorer rejects them).
         self.assertNotIn("cwe_401", text)
         self.assertNotIn("Allowed bug types (CWE ids or aliases)", text)
+
+    def test_meta_tool_install_is_opt_in(self) -> None:
+        import tempfile
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary) / "ws"
+            workspace.mkdir()
+            with mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("BENCH_GOAL_PLUS_ZSOFT_DETECT_META_TOOL", None)
+                with mock.patch.object(adapter.subprocess, "run") as run:
+                    self.assertIsNone(adapter.install_meta_tool(workspace))
+                    run.assert_not_called()
+
+    def test_meta_tool_install_runs_official_installer(self) -> None:
+        import tempfile
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "meta-tool"
+            (source / "install.py").parent.mkdir(parents=True)
+            (source / "install.py").write_text("# stub\n")
+            workspace = Path(temporary) / "ws"
+            workspace.mkdir()
+            env = {
+                "BENCH_GOAL_PLUS_ZSOFT_DETECT_META_TOOL": "1",
+                "BENCH_GOAL_PLUS_META_TOOL_SRC": str(source),
+            }
+            completed = mock.Mock(returncode=0, stdout="", stderr="")
+            with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
+                adapter.subprocess, "run", return_value=completed
+            ) as run:
+                self.assertIn("BATE", adapter.install_meta_tool(workspace))
+            command = run.call_args.args[0]
+            self.assertEqual(
+                command[1:4],
+                [str(source / "install.py"), "--pi", "--project"],
+            )
+            self.assertEqual(command[4], str(workspace))
+
+    def test_meta_tool_install_failure_raises_adapter_error(self) -> None:
+        import tempfile
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "meta-tool"
+            source.mkdir()
+            (source / "install.py").write_text("# stub\n")
+            workspace = Path(temporary) / "ws"
+            workspace.mkdir()
+            env = {
+                "BENCH_GOAL_PLUS_ZSOFT_DETECT_META_TOOL": "1",
+                "BENCH_GOAL_PLUS_META_TOOL_SRC": str(source),
+            }
+            completed = mock.Mock(returncode=1, stdout="", stderr="boom")
+            with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
+                adapter.subprocess, "run", return_value=completed
+            ):
+                with self.assertRaisesRegex(adapter.AdapterError, "meta-tool install failed"):
+                    adapter.install_meta_tool(workspace)
         self.assertEqual(adapter.EVALUATION_MODE, "blind")
         self.assertEqual(adapter.PRIMARY_METRIC, "f1")
         self.assertEqual(adapter.GOAL_PLUS_PROCESS_METRIC, "format_valid")

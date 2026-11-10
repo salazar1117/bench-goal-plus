@@ -55,6 +55,8 @@ LIVE_SEARCH_CONCURRENCY=4
 CELL_CONCURRENCY=1
 REPEAT_COUNT=1
 GOAL_PLUS_SPAWN_MODE="${DETECT_GOAL_PLUS_SPAWN_MODE:-fresh}"
+META_TOOL_ENABLED="${DETECT_META_TOOL:-0}"
+META_TOOL_SRC="${DETECT_META_TOOL_SRC:-}"
 MAX_INFRA_ATTEMPTS="${DETECT_MAX_INFRA_ATTEMPTS:-2}"
 STATUS_INTERVAL_SECONDS="${DETECT_STATUS_INTERVAL_SECONDS:-60}"
 FETCH_MISSING_SOURCES="${DETECT_FETCH_MISSING_SOURCES:-1}"
@@ -104,6 +106,11 @@ usage() {
   BENCH_GOAL_PLUS_EXPECTED_REF  可选:期望的 goal-plus 分支/ref。设置时 HEAD 必须
                                 精确匹配(可复现实验);不设置则不做 hash 校对
   DETECT_STATUS_INTERVAL_SECONDS 实验运行心跳间隔，默认 60 秒
+  DETECT_META_TOOL              1 时在 prepare 阶段把 BATE meta-tool Pi 包装进
+                                campaign workspace（官方安装器,需 pip/npm 网络,
+                                多花 1-3 分钟;Main 与 goal-plus worker 生效）
+  DETECT_META_TOOL_SRC          meta-tool 源目录覆盖（默认
+                                /data/disk/tangzhiyun/muyuan-meta/plugins/infra/meta-tool）
   DETECT_SHARED_CACHE           1 时为 Goal Plus 运行开启 shared_cache 事实面与
                                 LLM verifier 逐 finding 路径可行性分析（默认 0）
   DETECT_SKILL                  1 时把 adapter 的 task-local Skills（如
@@ -211,6 +218,8 @@ if [[ "$GOAL_PLUS_SPAWN_MODE" == "fork" ]]; then
     ((LIVE_SEARCH_CONCURRENCY >= 2)) \
         || die "fork 模式要求 K (--live-search-concurrency) >= 2"
 fi
+[[ "$META_TOOL_ENABLED" == "0" || "$META_TOOL_ENABLED" == "1" ]] \
+    || die "DETECT_META_TOOL 只能是 0 或 1"
 [[ "$REPEAT_COUNT" =~ ^[1-9][0-9]*$ ]] \
     || die "R (--repeats) 必须是正整数"
 [[ "$MAX_INFRA_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] \
@@ -450,6 +459,15 @@ else
     unset BENCH_GOAL_PLUS_ZSOFT_DETECT_TASK_SKILLS
 fi
 
+if [[ "$META_TOOL_ENABLED" == "1" ]]; then
+    export BENCH_GOAL_PLUS_ZSOFT_DETECT_META_TOOL=1
+    if [[ -n "$META_TOOL_SRC" ]]; then
+        export BENCH_GOAL_PLUS_META_TOOL_SRC="$META_TOOL_SRC"
+    fi
+else
+    unset BENCH_GOAL_PLUS_ZSOFT_DETECT_META_TOOL BENCH_GOAL_PLUS_META_TOOL_SRC
+fi
+
 cleanup_runtime() {
     if [[ -n "$ACTIVE_HEARTBEAT_PID" ]]; then
         kill "$ACTIVE_HEARTBEAT_PID" >/dev/null 2>&1 || true
@@ -458,6 +476,7 @@ cleanup_runtime() {
     fi
     unset BENCH_GOAL_PLUS_ZSOFT_DETECT_SOURCE_CACHE
     unset BENCH_GOAL_PLUS_ZSOFT_DETECT_TASK_SKILLS
+    unset BENCH_GOAL_PLUS_ZSOFT_DETECT_META_TOOL BENCH_GOAL_PLUS_META_TOOL_SRC
     unset "$PROVIDER_KEY_ENV"
 }
 
