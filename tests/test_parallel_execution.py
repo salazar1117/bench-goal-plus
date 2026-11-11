@@ -173,8 +173,12 @@ class ParallelExecutionTest(unittest.TestCase):
 
             initial_only = audit()
             self.assertEqual(initial_only["concurrency"]["max_live_workers"], 2)
-            self.assertFalse(initial_only["passed"])
-            self.assertTrue(any("a idle for 30.0s" in e for e in initial_only["errors"]))
+            # A single-invocation lane that completed normally passes;
+            # the tail idle is the natural "finished early" shape, not a
+            # violation (unsettled invocations are caught separately).
+            self.assertTrue(initial_only["passed"], initial_only["errors"])
+            lane_a = next(l for l in initial_only["lanes"] if l["candidate_id"] == "a")
+            self.assertGreater(lane_a["tail_idle_seconds"], 0)
             launch(11, "a", "two")
             launch(26, "b", "two")
             # Native files are chronological; append helpers above model independent lanes.

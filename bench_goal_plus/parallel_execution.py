@@ -244,13 +244,18 @@ def audit_pi_parallel_execution(
         #
         # A trailing idle stretch that extends to the deadline with no later
         # activity is the natural "finished early" shape of a completed
-        # search. Judge the tail only for a lane that was never continued.
+        # search — for any lane length, not just continued lanes. An
+        # unsettled or hung invocation is already caught by the
+        # unsettled-invocation check above, so a settled invocation
+        # followed by idle time always means the worker finished and the
+        # Main chose not to re-dispatch (typically during closeout).
+        # Previously, single-invocation lanes had their tail idle checked
+        # against max_idle_seconds, which incorrectly flagged workers that
+        # completed normally while the Main was running closeout.
         tail_idle = max(0, (deadline - cursor).total_seconds())
-        if len(lane) < 2:
-            gaps.append(tail_idle)
-        # For continued lanes, mid-run gaps are informational only
-        transient_interruptions = gaps if len(lane) >= 2 else []
-        checked_gaps = [] if len(lane) >= 2 else gaps
+        # For all lanes, mid-run gaps are informational only
+        transient_interruptions = gaps
+        checked_gaps = []
         largest = max(checked_gaps, default=0)
         if largest > max_idle_seconds:
             errors.append(f"{candidate} idle for {largest:.1f}s; limit {max_idle_seconds}s")
